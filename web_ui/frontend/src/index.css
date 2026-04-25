@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Dark theme (default) ── */
+:root, [data-theme="dark"] {
+  --bg:           #0d0d15;
+  --bg-panel:     rgba(26,26,38,0.55);
+  --bg-card:      #1f1f27;
+  --bg-input:     rgba(255,255,255,0.04);
+  --border:       rgba(255,255,255,0.07);
+  --text:         #e4e1ed;
+  --text-muted:   #64748b;
+  --text-faint:   #374151;
+  --dot:          #2e2e3e;
+  --topbar:       rgba(13,13,21,0.85);
+  --sidebar:      rgba(13,13,21,0.92);
+  --subnav:       rgba(13,13,21,0.85);
+  --stats:        rgba(13,13,21,0.94);
+  --nav-active:   rgba(99,102,241,0.12);
+  --nav-hover:    rgba(255,255,255,0.05);
+  --conn-main:    #8083ff;
+  --conn-dash:    #4cd7f6;
+}
+
+/* ── Light theme ── */
+[data-theme="light"] {
+  --bg:           #f5f2fe;
+  --bg-panel:     rgba(255,255,255,0.96);
+  --bg-card:      #ffffff;
+  --bg-input:     #ede9f9;
+  --border:       #e2ddf0;
+  --text:         #1b1b23;
+  --text-muted:   #6b7280;
+  --text-faint:   #c4bcde;
+  --dot:          #c8c2d8;
+  --topbar:       rgba(245,242,254,0.96);
+  --sidebar:      #ffffff;
+  --subnav:       rgba(255,255,255,0.94);
+  --stats:        #ffffff;
+  --nav-active:   rgba(99,102,241,0.08);
+  --nav-hover:    rgba(99,102,241,0.05);
+  --conn-main:    #6366f1;
+  --conn-dash:    #006877;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, sans-serif;
+  height: 100vh;
+  overflow: hidden;
+  transition: background 0.2s, color 0.2s;
+}
+
+#root { height: 100vh; display: flex; flex-direction: column; }
+
+.dot-grid {
+  background-image: radial-gradient(circle, var(--dot) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.topbar {
+  background: var(--topbar);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.sidebar {
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+
+.subnav {
+  background: var(--subnav);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+}
+
+.glass-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.stats-panel {
+  background: var(--stats);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+}
+
+.nav-link {
+  color: var(--text-muted);
+  transition: all 0.15s;
+}
+.nav-link:hover { background: var(--nav-hover); color: #818cf8; }
+.nav-link.active { color: #818cf8; background: var(--nav-active); border-left: 2px solid #6366f1; }
+
+.syn-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  transition: border-color 0.15s;
+}
+.syn-input::placeholder { color: var(--text-muted); }
+.syn-input:focus { outline: none; border-color: rgba(99,102,241,0.5); }
+
+/* Draggable node label */
+.tree-node { cursor: grab; user-select: none; }
+.tree-node:active { cursor: grabbing; }
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.3); border-radius: 2px; }
+
+/* React Flow overrides */
+.react-flow__background { background: var(--bg) !important; }
+.react-flow__controls button { background: var(--bg-card); border-color: var(--border); color: var(--text); }
+.react-flow__controls button:hover { background: var(--nav-hover); }
+

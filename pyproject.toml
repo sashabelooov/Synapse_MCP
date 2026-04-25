@@ -1,0 +1,26 @@
+[project]
+name = "mcp-mental-model"
+version = "0.1.0"
+description = "MCP server that builds mental models of Python backends (FastAPI, Django)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.0.0",
+    "aiosqlite>=0.20.0",
+    "networkx>=3.2",
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "libcst>=1.3.0",
+    "httpx>=0.27.0",
+    "anyio>=4.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_server", "web_ui"]
+
+[project.scripts]
+mental-model-mcp = "mcp_server.server:main"
+mental-model-ui  = "web_ui.server:main"

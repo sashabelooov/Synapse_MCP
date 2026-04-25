@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mental-model": {
+      "command": "python",
+      "args": ["-m", "mcp_server.server"],
+      "cwd": "/home/sashabelov/Projects/demo/mcp-mental-model"
+    }
+  }
+}
