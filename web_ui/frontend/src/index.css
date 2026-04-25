@@ -4,17 +4,17 @@
 
 /* ── Dark theme (default) ── */
 :root, [data-theme="dark"] {
-  --bg:           #0d0d15;
-  --bg-panel:     rgba(26,26,38,0.55);
-  --bg-card:      #1f1f27;
-  --bg-input:     rgba(255,255,255,0.04);
-  --border:       rgba(255,255,255,0.07);
+  --bg:           #12121a;
+  --bg-panel:     rgba(22,22,32,0.6);
+  --bg-card:      #1e1e28;
+  --bg-input:     rgba(255,255,255,0.05);
+  --border:       rgba(255,255,255,0.08);
   --text:         #e4e1ed;
   --text-muted:   #64748b;
   --text-faint:   #374151;
-  --dot:          #2e2e3e;
-  --topbar:       rgba(13,13,21,0.85);
-  --sidebar:      rgba(13,13,21,0.92);
+  --dot:          rgba(255,255,255,0.09);
+  --topbar:       rgba(18,18,26,0.88);
+  --sidebar:      rgba(16,16,24,0.96);
   --subnav:       rgba(13,13,21,0.85);
   --stats:        rgba(13,13,21,0.94);
   --nav-active:   rgba(99,102,241,0.12);
@@ -59,7 +59,7 @@ body {
 
 .dot-grid {
   background-image: radial-gradient(circle, var(--dot) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-size: 20px 20px;
 }
 
 .topbar {
