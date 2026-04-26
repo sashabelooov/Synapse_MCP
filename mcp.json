@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "mental-model": {
-      "command": "python",
-      "args": ["-m", "mcp_server.server"],
-      "cwd": "/home/sashabelov/Projects/demo/mcp-mental-model"
+    "synapse-mcp": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "mcp_server.server"],
+      "cwd": "${workspaceFolder}"
     }
   }
 }
