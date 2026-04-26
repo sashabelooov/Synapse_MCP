@@ -26,6 +26,7 @@ web_ui/frontend/node_modules/
 !.claude/routines/
 !.claude/routines/**
 !.claude/system-design.md
+!.claude/project.md
 skills-lock.json
 
 .test-fastapi-app
