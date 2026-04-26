@@ -21,8 +21,11 @@ web_ui/frontend/node_modules/
 .vscode/
 .idea/
 
-# Claude Code internals
-.claude/
+# Claude Code internals (keep private, but track routines + system-design)
+.claude/*
+!.claude/routines/
+!.claude/routines/**
+!.claude/system-design.md
 skills-lock.json
 
 .test-fastapi-app
