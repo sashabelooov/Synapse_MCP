@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import axios from 'axios'
-import { Folder, FolderOpen, FileCode2, Loader2, List, GitGraph, ArrowDown, ArrowRight } from 'lucide-react'
+import { Folder, FolderOpen, FileCode2, Loader2, List, ArrowDown, ArrowRight } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import DraggableTreeGraph from './DraggableTreeGraph'
 
@@ -19,7 +19,9 @@ const ROLE_COLOR: Record<string, string> = {
 }
 
 function inferRole(name: string): string {
-  const n = name.replace('.py', '').toLowerCase()
+  const lower = name.toLowerCase()
+  if (lower === '.env' || lower.startsWith('.env.') || lower.endsWith('.env')) return 'config'
+  const n = lower.replace('.py', '')
   const map: Record<string, string> = {
     models: 'model', model: 'model', schemas: 'schema', schema: 'schema',
     serializers: 'schema', views: 'view', routes: 'router', router: 'router',
@@ -98,71 +100,91 @@ export default function ProjectTree() {
   )
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 shrink-0"
-           style={{ borderBottom: '1px solid var(--border)' }}>
-        <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+    <div style={{ position: 'relative', height: '100%' }}>
+      {/* Toolbar — floats over canvas, pushed past hamburger button */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0,
+        zIndex: 10, display: 'flex', alignItems: 'center', gap: 8,
+        padding: '12px 16px 12px 96px', pointerEvents: 'none',
+      }}>
+
+        {/* Button group — re-enable pointer events inside the overlay */}
+        <div style={{
+          display: 'flex',
+          background: 'var(--bg-input)',
+          borderRadius: 9999,
+          padding: 3,
+          gap: 2,
+          border: '1px solid var(--border)',
+          pointerEvents: 'auto',
+        }}>
+          {/* Original Structure */}
           <button
             onClick={() => setViewMode('list')}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors"
             style={{
-              background: viewMode === 'list' ? 'var(--nav-active)' : 'transparent',
-              color: viewMode === 'list' ? '#818cf8' : 'var(--text-muted)',
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '5px 14px',
+              borderRadius: 9999,
+              border: 'none',
+              fontSize: 12, fontWeight: 600, letterSpacing: '0.02em',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              background: viewMode === 'list' ? 'var(--text)' : 'transparent',
+              color: viewMode === 'list' ? 'var(--bg)' : 'var(--text-muted)',
             }}
           >
-            <List size={13} /> Original Structure
+            <List size={12} />
+            ORIGINAL STRUCTURE
           </button>
+
+          {/* Top-Bottom */}
           <button
-            onClick={() => setViewMode('graph')}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors"
+            onClick={() => { setViewMode('graph'); setDirection('TB') }}
             style={{
-              background: viewMode === 'graph' ? 'var(--nav-active)' : 'transparent',
-              color: viewMode === 'graph' ? '#818cf8' : 'var(--text-muted)',
-              borderLeft: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '5px 14px',
+              borderRadius: 9999,
+              border: 'none',
+              fontSize: 12, fontWeight: 600, letterSpacing: '0.02em',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              background: viewMode === 'graph' && direction === 'TB' ? 'var(--text)' : 'transparent',
+              color: viewMode === 'graph' && direction === 'TB' ? 'var(--bg)' : 'var(--text-muted)',
             }}
           >
-            <GitGraph size={13} /> Tree Structure
+            <ArrowDown size={12} />
+            TOP-BOTTOM
+          </button>
+
+          {/* Left-Right */}
+          <button
+            onClick={() => { setViewMode('graph'); setDirection('LR') }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '5px 14px',
+              borderRadius: 9999,
+              border: 'none',
+              fontSize: 12, fontWeight: 600, letterSpacing: '0.02em',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              background: viewMode === 'graph' && direction === 'LR' ? 'var(--text)' : 'transparent',
+              color: viewMode === 'graph' && direction === 'LR' ? 'var(--bg)' : 'var(--text-muted)',
+            }}
+          >
+            <ArrowRight size={12} />
+            LEFT-RIGHT
           </button>
         </div>
 
-        {viewMode === 'graph' && (
-          <div className="flex rounded-lg overflow-hidden ml-2" style={{ border: '1px solid var(--border)' }}>
-            <button
-              onClick={() => setDirection('TB')}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors"
-              title="Top to bottom"
-              style={{
-                background: direction === 'TB' ? 'var(--nav-active)' : 'transparent',
-                color: direction === 'TB' ? '#818cf8' : 'var(--text-muted)',
-              }}
-            >
-              <ArrowDown size={13} /> Top–Bottom
-            </button>
-            <button
-              onClick={() => setDirection('LR')}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors"
-              title="Left to right"
-              style={{
-                background: direction === 'LR' ? 'var(--nav-active)' : 'transparent',
-                color: direction === 'LR' ? '#818cf8' : 'var(--text-muted)',
-                borderLeft: '1px solid var(--border)',
-              }}
-            >
-              <ArrowRight size={13} /> Left–Right
-            </button>
-          </div>
-        )}
-
-        <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>
-          {viewMode === 'graph' ? 'Drag to move nodes · Scroll to zoom' : 'Click folders to expand'}
+        <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)', pointerEvents: 'none' }}>
+          {viewMode === 'graph' ? 'Drag · Scroll to zoom · Pan canvas' : 'Click folders to expand'}
         </span>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-hidden">
+      {/* Content — fills full height, toolbar floats above it */}
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
         {viewMode === 'list' ? (
-          <div className="flex h-full">
+          <div className="flex h-full" style={{ paddingTop: '56px' }}>
             {/* Legend */}
             <aside className="w-48 shrink-0 py-3 px-3 overflow-y-auto"
                    style={{ borderRight: '1px solid var(--border)' }}>

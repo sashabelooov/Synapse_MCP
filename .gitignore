@@ -21,5 +21,8 @@ web_ui/frontend/node_modules/
 .vscode/
 .idea/
 
+# Claude Code internals
+.claude/
+skills-lock.json
 
 .test-fastapi-app

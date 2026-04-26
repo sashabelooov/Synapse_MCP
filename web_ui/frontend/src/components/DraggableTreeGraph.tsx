@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import dockerImg from '../assets/docker.jpeg'
 
 interface TreeNode {
   name: string; type: 'file' | 'dir'; path: string; children?: TreeNode[]
@@ -29,16 +30,103 @@ function inferRole(name: string): string {
   return map[n] || ''
 }
 
-const NODE_W = 90, NODE_H = 62, H_GAP = 60, V_GAP = 40
+// Layout constants — generous spacing to prevent overlaps
+const ICON  = 44          // icon px
+const CW    = 128         // cell width  (ICON + horizontal padding)
+const CH    = 80          // cell height (ICON + label + role)
+const H_GAP = 56          // gap between sibling cells (horizontal)
+const V_GAP = 80          // gap between ranks (vertical)
+
+// Icon centered inside cell
+const IC_X = (CW - ICON) / 2   // 42
+const IC_Y = 0
+
+// ── SVG Icons ─────────────────────────────────────────────────────────────────
+
+function FolderIcon({ x, y }: { x: number; y: number }) {
+  return (
+    <svg x={x} y={y} width={ICON} height={ICON} viewBox="0 0 24 24">
+      <path d="M10 4H4C2.89 4 2 4.89 2 6V18C2 19.11 2.89 20 4 20H20C21.11 20 22 19.11 22 18V8C22 6.89 21.11 6 20 6H12L10 4Z" fill="#F4C430"/>
+    </svg>
+  )
+}
+
+function PythonIcon({ x, y }: { x: number; y: number }) {
+  return (
+    <svg x={x} y={y} width={ICON} height={ICON} viewBox="0 0 110 110">
+      <path d="M55.2 0C24.7 0 25.9 13.2 25.9 13.2L26 21.7H55.8V25.9H13.7C13.7 25.9 0 24.5 0 55.2C0 85.9 11.9 84.1 11.9 84.1L21.3 84.1V71.1C21.3 71.1 20.8 54.8 37.1 54.8H64.4C64.4 54.8 80.2 54.4 80.2 38.6V15.7C80.2 15.7 81.5 0 55.2 0ZM40.9 8.6C43.5 8.6 45.6 10.7 45.6 13.3C45.6 15.9 43.5 18 40.9 18C38.3 18 36.2 15.9 36.2 13.3C36.2 10.7 38.3 8.6 40.9 8.6Z" fill="#3776AB"/>
+      <path d="M54.8 110C85.3 110 84.1 96.8 84.1 96.8L84 88.3H54.2V84.1H96.3C96.3 84.1 110 85.5 110 54.8C110 24.1 98.1 25.9 98.1 25.9L88.7 25.9V38.9C88.7 38.9 89.2 55.2 72.9 55.2H45.6C45.6 55.2 29.8 55.6 29.8 71.4V94.3C29.8 94.3 28.5 110 54.8 110ZM69.1 101.4C66.5 101.4 64.4 99.3 64.4 96.7C64.4 94.1 66.5 92 69.1 92C71.7 92 73.8 94.1 73.8 96.7C73.8 99.3 71.7 101.4 69.1 101.4Z" fill="#FFD43B"/>
+    </svg>
+  )
+}
+
+function DockerIcon({ x, y }: { x: number; y: number }) {
+  return (
+    <image href={dockerImg} x={x} y={y} width={ICON} height={ICON} preserveAspectRatio="xMidYMid meet" />
+  )
+}
+
+function EnvIcon({ x, y }: { x: number; y: number }) {
+  return (
+    <svg x={x} y={y} width={ICON} height={ICON} viewBox="0 0 24 24" fill="none">
+      <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )
+}
+
+function GitHubIcon({ x, y }: { x: number; y: number }) {
+  return (
+    <svg x={x} y={y} width={ICON} height={ICON} viewBox="0 0 24 24">
+      <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" fill="#94a3b8"/>
+    </svg>
+  )
+}
+
+function GenericFileIcon({ x, y, color }: { x: number; y: number; color: string }) {
+  return (
+    <svg x={x} y={y} width={ICON} height={ICON} viewBox="0 0 24 24">
+      <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" fill={color} opacity="0.85"/>
+    </svg>
+  )
+}
+
+function NodeIcon({ x, y, name, type, roleColor }: {
+  x: number; y: number; name: string; type: 'file' | 'dir'; roleColor: string
+}) {
+  const n = name.toLowerCase()
+  if (type === 'dir') {
+    if (n.startsWith('docker') || n === 'docker') return <DockerIcon x={x} y={y} />
+    if (n === '.github' || n === 'github') return <GitHubIcon x={x} y={y} />
+    return <FolderIcon x={x} y={y} />
+  }
+  if (n.endsWith('.py')) return <PythonIcon x={x} y={y} />
+  if (n.startsWith('dockerfile') || n.includes('docker')) return <DockerIcon x={x} y={y} />
+  if (n.includes('github') || n === '.gitignore') return <GitHubIcon x={x} y={y} />
+  if (n === '.env' || n.startsWith('.env') || n.endsWith('.env') || n.includes('.env')) return <EnvIcon x={x} y={y} />
+  return <GenericFileIcon x={x} y={y} color={roleColor} />
+}
+
+// ── Layout ────────────────────────────────────────────────────────────────────
+
+// Fix #5: sort children — dirs first, then files, both alphabetical
+function sortedChildren(children: TreeNode[]): TreeNode[] {
+  return [...children].sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
+    return a.name.localeCompare(b.name)
+  })
+}
 
 function subtreeSize(n: TreeNode): number {
   if (!n.children?.length) return 1
-  return n.children.reduce((s, c) => s + subtreeSize(c), 0)
+  return sortedChildren(n.children).reduce((s, c) => s + subtreeSize(c), 0)
 }
 
 function buildGraph(root: TreeNode, direction: 'TB' | 'LR') {
   const nodes: GraphNode[] = [], edges: GraphEdge[] = []
-  const SW = NODE_W + H_GAP, SH = NODE_H + V_GAP
+  const SW = CW + H_GAP   // total horizontal step
+  const SH = CH + V_GAP   // total vertical step
 
   function place(n: TreeNode, depth: number, leafOff: number) {
     const size = subtreeSize(n)
@@ -47,11 +135,11 @@ function buildGraph(root: TreeNode, direction: 'TB' | 'LR') {
       id: n.path, label: n.name, type: n.type,
       role: n.type === 'file' ? inferRole(n.name) : '',
       x: direction === 'TB' ? center * SW : depth * SW,
-      y: direction === 'TB' ? depth * SH : center * SH,
+      y: direction === 'TB' ? depth * SH  : center * SH,
     })
     if (n.children?.length) {
       let off = leafOff
-      for (const c of n.children) {
+      for (const c of sortedChildren(n.children)) {
         edges.push({ source: n.path, target: c.path })
         place(c, depth + 1, off)
         off += subtreeSize(c)
@@ -68,71 +156,29 @@ function toSVGPoint(svg: SVGSVGElement, cx: number, cy: number) {
   return pt.matrixTransform(svg.getScreenCTM()!.inverse())
 }
 
-// ── Branded SVG icons (nested <svg> auto-scales via viewBox) ─────────────────
+// Fix #3: edge connection points strictly by direction
+function edgePoints(
+  sp: { x: number; y: number },
+  tp: { x: number; y: number },
+  direction: 'TB' | 'LR'
+) {
+  // Icon top-left within cell
+  const six = sp.x + IC_X, siy = sp.y + IC_Y
+  const tix = tp.x + IC_X, tiy = tp.y + IC_Y
 
-function PythonIcon({ x, y }: { x: number; y: number }) {
-  return (
-    <svg x={x} y={y} width={22} height={22} viewBox="0 0 110 110">
-      <path d="M55 0C24.4 0 25.6 13.2 25.6 13.2l.1 13.6h29.5v4.2H14.4S0 29.1 0 55.4s13.5 25.4 13.5 25.4l12.1-.1V64.3c0-16.1 13.1-30.1 30.1-30.1h28.1V13.2S85.6 0 55 0z" fill="#3776ab"/>
-      <path d="M55 110c30.6 0 29.4-13.2 29.4-13.2l-.1-13.6H54.8v-4.2h40.8s14.4 1.9 14.4-24.4-13.5-25.4-13.5-25.4l-12.1.1v16.4c0 16.1-13.1 30.1-30.1 30.1H26.2v21.1s-1.8 13.2 28.8 13.2z" fill="#ffd343"/>
-    </svg>
-  )
-}
-
-function PostgresIcon({ x, y }: { x: number; y: number }) {
-  return (
-    <svg x={x} y={y} width={22} height={22} viewBox="0 0 100 100">
-      <path d="M37.5 15.6c-11.8 0-21.4 9.6-21.4 21.4v2.7c0 3.3.6 6.5 1.7 9.5l-4.2 3.6c-2.4 2-3.8 4.9-3.8 8v1.7h37.5c2.3 0 4.2-1.9 4.2-4.2v-32c0-5.9-4.8-10.7-10.7-10.7h-3.3zm25 0c-5.9 0-10.7 4.8-10.7 10.7v32c0 2.3 1.9 4.2 4.2 4.2h37.5v-1.7c0-3.1-1.4-6-3.8-8l-4.2-3.6c1.1-3 1.7-6.2 1.7-9.5v-2.7c0-11.8-9.6-21.4-21.4-21.4h-3.3z" fill="#336791"/>
-    </svg>
-  )
-}
-
-function DockerIcon({ x, y }: { x: number; y: number }) {
-  return (
-    <svg x={x} y={y} width={22} height={22} viewBox="0 0 24 24">
-      <path d="M13.983 11.078h2.119c.102 0 .186-.084.186-.186V8.773a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.186v2.119c0 .102.083.186.185.186m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.342a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v2.119c0 .102.084.186.185.186m0 2.715h2.118a.187.187 0 00.186-.186V6.058a.187.187 0 00-.186-.186h-2.118a.185.185 0 00-.185.186v2.119c0 .102.084.186.185.186m-2.954 0h2.119a.186.186 0 00.185-.186V6.058a.185.185 0 00-.185-.186H8.075a.186.186 0 00-.185.186v2.119c0 .102.083.186.185.186m0 2.715h2.119a.186.186 0 00.185-.186V8.773a.186.186 0 00-.185-.186H8.075a.186.186 0 00-.185.186v2.119c0 .102.083.186.185.186m-2.954 0h2.119a.186.186 0 00.185-.186V8.773a.186.186 0 00-.185-.186H5.12a.186.186 0 00-.185.186v2.119c0 .102.084.186.185.186m-2.954 0h2.119a.186.186 0 00.185-.186V8.773a.186.186 0 00-.185-.186H2.166a.186.186 0 00-.185.186v2.119c0 .102.084.186.185.186m0-2.715h2.119a.186.186 0 00.185-.186V6.058a.185.185 0 00-.185-.186H2.166a.186.186 0 00-.185.186v2.119c0 .102.084.186.185.186m0-2.715h2.119a.186.186 0 00.185-.186V3.342a.186.186 0 00-.185-.185H2.166a.186.186 0 00-.185.185v2.119c0 .102.084.186.185.186m20.93 5.99c-1.17-.444-2.486-.25-4.174.405-1.772.71-3.228.87-4.596.102C15.744 10.439 14.557 9.621 13.983 8.3c-.812 1.275-1.147 1.367-1.906 1.367H.83c-.18 0-.312.149-.33.323-.306 2.912.239 5.152 1.613 6.653 3.56 3.886 10.016 3.648 13.08 1.453 1.114-.797 1.997-1.891 2.591-3.234 1.384 1.264 3.317 1.496 5.355.74 1.027-.381 1.786-1.023 2.491-1.892a.25.25 0 00-.303-.37" fill="#2496ed"/>
-    </svg>
-  )
-}
-
-function GitHubIcon({ x, y }: { x: number; y: number }) {
-  return (
-    <svg x={x} y={y} width={22} height={22} viewBox="0 0 24 24">
-      <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" fill="#94a3b8"/>
-    </svg>
-  )
-}
-
-function FolderIcon({ x, y, color }: { x: number; y: number; color: string }) {
-  return (
-    <svg x={x} y={y} width={22} height={22} viewBox="0 0 24 24">
-      <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z" fill={color}/>
-    </svg>
-  )
-}
-
-function GenericFileIcon({ x, y, color }: { x: number; y: number; color: string }) {
-  return (
-    <svg x={x} y={y} width={22} height={22} viewBox="0 0 24 24">
-      <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" fill={color} opacity="0.85"/>
-    </svg>
-  )
-}
-
-function NodeIcon({ x, y, name, type, roleColor }: {
-  x: number; y: number; name: string; type: 'file' | 'dir'; roleColor: string
-}) {
-  const n = name.toLowerCase()
-  if (type === 'dir') {
-    if (n === 'docker' || n.startsWith('docker')) return <DockerIcon x={x} y={y} />
-    if (n === '.github' || n === 'github') return <GitHubIcon x={x} y={y} />
-    return <FolderIcon x={x} y={y} color="#facc15" />
+  if (direction === 'TB') {
+    // source: bottom-center of icon; target: top-center of icon
+    return {
+      sx: six + ICON / 2, sy: siy + ICON,
+      tx: tix + ICON / 2, ty: tiy,
+    }
+  } else {
+    // source: right-center of icon; target: left-center of icon
+    return {
+      sx: six + ICON, sy: siy + ICON / 2,
+      tx: tix,        ty: tiy + ICON / 2,
+    }
   }
-  if (n.endsWith('.py')) return <PythonIcon x={x} y={y} />
-  if (n.startsWith('dockerfile') || n.includes('docker')) return <DockerIcon x={x} y={y} />
-  if (n.includes('postgres') || n.includes('postgresql') || n.endsWith('.sql')) return <PostgresIcon x={x} y={y} />
-  if (n.includes('github') || n === '.gitignore' || n === '.gitattributes') return <GitHubIcon x={x} y={y} />
-  return <GenericFileIcon x={x} y={y} color={roleColor} />
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -142,7 +188,7 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({})
   const [edges, setEdges] = useState<GraphEdge[]>([])
   const [baseNodes, setBaseNodes] = useState<GraphNode[]>([])
-  const [viewBox, setViewBox] = useState({ x: -50, y: -50, w: 1200, h: 800 })
+  const [viewBox, setViewBox] = useState({ x: -80, y: -80, w: 1400, h: 900 })
 
   const dragging = useRef<{ id: string; ox: number; oy: number } | null>(null)
   const panning  = useRef<{ sx: number; sy: number; vbx: number; vby: number } | null>(null)
@@ -159,13 +205,14 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
     nodes.forEach(n => { pos[n.id] = { x: n.x, y: n.y } })
     setPositions(pos)
     if (nodes.length) {
-      const maxX = Math.max(...nodes.map(n => n.x + NODE_W))
-      const maxY = Math.max(...nodes.map(n => n.y + NODE_H))
-      setViewBox({ x: -50, y: -50, w: maxX + 100, h: maxY + 100 })
+      const pad = 100
+      const maxX = Math.max(...nodes.map(n => n.x + CW)) + pad
+      const maxY = Math.max(...nodes.map(n => n.y + CH)) + pad
+      setViewBox({ x: -pad, y: -pad, w: maxX + pad, h: maxY + pad })
     }
   }, [root, direction])
 
-  // Wheel zoom (non-passive so preventDefault works)
+  // Wheel zoom (non-passive)
   useEffect(() => {
     const el = svgRef.current
     if (!el) return
@@ -175,10 +222,10 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
       const mx = e.clientX - rect.left, my = e.clientY - rect.top
       const factor = e.deltaY > 0 ? 1.12 : 1 / 1.12
       setViewBox(prev => {
-        const vbmx = prev.x + (mx / rect.width) * prev.w
+        const vbmx = prev.x + (mx / rect.width)  * prev.w
         const vbmy = prev.y + (my / rect.height) * prev.h
-        const nw = Math.max(120, Math.min(8000, prev.w * factor))
-        const nh = Math.max(80,  Math.min(6000, prev.h * factor))
+        const nw = Math.max(200, Math.min(12000, prev.w * factor))
+        const nh = Math.max(120, Math.min(9000,  prev.h * factor))
         return { x: vbmx - (mx / rect.width) * nw, y: vbmy - (my / rect.height) * nh, w: nw, h: nh }
       })
     }
@@ -186,17 +233,14 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
     return () => el.removeEventListener('wheel', handle)
   }, [])
 
-  // Node drag start — stopPropagation prevents canvas pan from starting
   const onNodeMouseDown = useCallback((e: React.MouseEvent, id: string) => {
-    e.preventDefault()
-    e.stopPropagation()
+    e.preventDefault(); e.stopPropagation()
     const pt = toSVGPoint(svgRef.current!, e.clientX, e.clientY)
     const pos = positions[id] ?? { x: 0, y: 0 }
     dragging.current = { id, ox: pt.x - pos.x, oy: pt.y - pos.y }
     if (svgRef.current) svgRef.current.style.cursor = 'grabbing'
   }, [positions])
 
-  // Canvas pan start (fires only when clicking empty SVG, nodes stop propagation)
   const onSVGMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     panning.current = { sx: e.clientX, sy: e.clientY, vbx: viewBoxRef.current.x, vby: viewBoxRef.current.y }
     if (svgRef.current) svgRef.current.style.cursor = 'grabbing'
@@ -220,10 +264,12 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
   }, [])
 
   const onMouseUp = useCallback(() => {
-    dragging.current = null
-    panning.current = null
+    dragging.current = null; panning.current = null
     if (svgRef.current) svgRef.current.style.cursor = 'grab'
   }, [])
+
+  const ARROW_COLOR_DIR  = '#facc15'
+  const ARROW_COLOR_FILE = '#6366f1'
 
   return (
     <svg
@@ -237,67 +283,64 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
       style={{ userSelect: 'none', display: 'block', cursor: 'grab' }}
     >
       <defs>
-        {/* Clean slim arrowhead — tip exactly at path endpoint (refX = marker width) */}
-        <marker id="arr-f" markerWidth="7" markerHeight="7" refX="7" refY="3.5" orient="auto">
-          <path d="M0,0.8 L7,3.5 L0,6.2 Z" fill="#6366f1" opacity="0.75" />
+        {/* Fix #2: closed arrowhead, refX at tip */}
+        <marker id="arr-dir"  markerWidth="9" markerHeight="9" refX="9" refY="4.5" orient="auto">
+          <path d="M0,0.5 L9,4.5 L0,8.5 Z" fill={ARROW_COLOR_DIR} />
         </marker>
-        <marker id="arr-d" markerWidth="7" markerHeight="7" refX="7" refY="3.5" orient="auto">
-          <path d="M0,0.8 L7,3.5 L0,6.2 Z" fill="#06b6d4" opacity="0.75" />
+        <marker id="arr-file" markerWidth="9" markerHeight="9" refX="9" refY="4.5" orient="auto">
+          <path d="M0,0.5 L9,4.5 L0,8.5 Z" fill={ARROW_COLOR_FILE} />
         </marker>
       </defs>
 
-      {/* Edges — behind nodes */}
+      {/* Edges */}
       {edges.map((edge, i) => {
         const sp = positions[edge.source], tp = positions[edge.target]
         if (!sp || !tp) return null
         const isDir = baseNodes.find(n => n.id === edge.source)?.type === 'dir'
+        const { sx, sy, tx, ty } = edgePoints(sp, tp, direction)
 
-        let sx, sy, tx, ty: number
-        if (direction === 'TB') {
-          sx = sp.x + NODE_W / 2; sy = sp.y + NODE_H
-          tx = tp.x + NODE_W / 2; ty = tp.y
-        } else {
-          sx = sp.x + NODE_W; sy = sp.y + NODE_H / 2
-          tx = tp.x;           ty = tp.y + NODE_H / 2
-        }
+        // Fix #3: bezier control points follow the direction strictly
+        const mx = (sx + tx) / 2, my = (sy + ty) / 2
         const d = direction === 'TB'
-          ? `M${sx},${sy} C${sx},${(sy+ty)/2} ${tx},${(sy+ty)/2} ${tx},${ty}`
-          : `M${sx},${sy} C${(sx+tx)/2},${sy} ${(sx+tx)/2},${ty} ${tx},${ty}`
+          ? `M${sx},${sy} C${sx},${my} ${tx},${my} ${tx},${ty}`
+          : `M${sx},${sy} C${mx},${sy} ${mx},${ty} ${tx},${ty}`
 
         return (
           <path key={i} d={d} fill="none"
-            stroke={isDir ? '#06b6d4' : '#6366f1'}
-            strokeWidth="1.4" strokeOpacity="0.5"
-            markerEnd={isDir ? 'url(#arr-d)' : 'url(#arr-f)'}
+            stroke={isDir ? ARROW_COLOR_DIR : ARROW_COLOR_FILE}
+            strokeWidth="1.4" strokeOpacity="0.55"
+            markerEnd={isDir ? 'url(#arr-dir)' : 'url(#arr-file)'}
           />
         )
       })}
 
-      {/* Nodes — in front */}
+      {/* Nodes — icon + label, no background */}
       {baseNodes.map(node => {
         const pos = positions[node.id]
         if (!pos) return null
         const roleColor = node.role ? ROLE_COLOR[node.role] : (node.type === 'dir' ? '#facc15' : '#94a3b8')
-        const ix = pos.x + (NODE_W - 22) / 2
-        const iy = pos.y + 5
+        const ix = pos.x + IC_X, iy = pos.y + IC_Y
 
         return (
           <g key={node.id} onMouseDown={e => onNodeMouseDown(e, node.id)} style={{ cursor: 'grab' }}>
-            {/* Full hit area */}
-            <rect x={pos.x} y={pos.y} width={NODE_W} height={NODE_H} fill="transparent" />
-            {/* Branded / generic icon */}
+            {/* Hit area */}
+            <rect x={pos.x} y={pos.y} width={CW} height={CH} fill="transparent" />
             <NodeIcon x={ix} y={iy} name={node.label} type={node.type} roleColor={roleColor} />
-            {/* Label */}
-            <text x={pos.x + NODE_W / 2} y={pos.y + 40}
-              textAnchor="middle" fontSize="9" fontWeight="500"
-              fill="var(--text)" fontFamily="Inter, system-ui, sans-serif">
+            <text
+              x={pos.x + CW / 2} y={pos.y + IC_Y + ICON + 16}
+              textAnchor="middle" fontSize="11" fontWeight="500"
+              fill="var(--text)" fontFamily="Inter, system-ui, sans-serif"
+              style={{ pointerEvents: 'none' }}
+            >
               {node.label.length > 14 ? node.label.slice(0, 13) + '…' : node.label}
             </text>
-            {/* Role badge */}
             {node.role && (
-              <text x={pos.x + NODE_W / 2} y={pos.y + 52}
-                textAnchor="middle" fontSize="7.5" fill={roleColor} opacity={0.85}
-                fontFamily="Inter, system-ui, sans-serif">
+              <text
+                x={pos.x + CW / 2} y={pos.y + IC_Y + ICON + 32}
+                textAnchor="middle" fontSize="9" fill={roleColor} opacity={0.85}
+                fontFamily="Inter, system-ui, sans-serif"
+                style={{ pointerEvents: 'none' }}
+              >
                 {node.role}
               </text>
             )}

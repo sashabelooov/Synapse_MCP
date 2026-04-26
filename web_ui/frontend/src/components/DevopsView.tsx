@@ -35,7 +35,7 @@ function DevopsNode({ data }: NodeProps) {
         </div>
       </div>
       {data.details && Object.keys(data.details as object).length > 0 && (
-        <div className="text-[10px] mt-1 pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+        <div className="text-[10px] mt-1 pt-1" style={{ borderTop: '1px solid var(--border)', color: 'var(--text-muted)' }}>
           {Object.entries(data.details as Record<string, unknown>).slice(0, 3).map(([k, v]) => (
             <div key={k} className="truncate">
               <span style={{ color: 'var(--text-faint)' }}>{k}:</span>{' '}
