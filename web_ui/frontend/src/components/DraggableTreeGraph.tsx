@@ -96,12 +96,11 @@ function NodeIcon({ x, y, name, type, roleColor }: {
 }) {
   const n = name.toLowerCase()
   if (type === 'dir') {
-    if (n.startsWith('docker') || n === 'docker') return <DockerIcon x={x} y={y} />
     if (n === '.github' || n === 'github') return <GitHubIcon x={x} y={y} />
     return <FolderIcon x={x} y={y} />
   }
   if (n.endsWith('.py')) return <PythonIcon x={x} y={y} />
-  if (n.startsWith('dockerfile') || n.includes('docker')) return <DockerIcon x={x} y={y} />
+  if (n.startsWith('dockerfile') || n === 'docker-compose.yml' || n === 'docker-compose.yaml' || n.startsWith('docker-compose')) return <DockerIcon x={x} y={y} />
   if (n.includes('github') || n === '.gitignore') return <GitHubIcon x={x} y={y} />
   if (n === '.env' || n.startsWith('.env') || n.endsWith('.env') || n.includes('.env')) return <EnvIcon x={x} y={y} />
   return <GenericFileIcon x={x} y={y} color={roleColor} />
