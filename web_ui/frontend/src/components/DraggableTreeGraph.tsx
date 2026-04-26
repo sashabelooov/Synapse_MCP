@@ -32,13 +32,13 @@ function inferRole(name: string): string {
 // Layout constants — generous spacing to prevent overlaps
 const ICON  = 44          // icon px
 const CW    = 128         // cell width  (ICON + horizontal padding)
-const CH    = 80          // cell height (ICON + label + role)
+const CH    = 82          // cell height (label-above + ICON + role-below)
 const H_GAP = 56          // gap between sibling cells (horizontal)
 const V_GAP = 80          // gap between ranks (vertical)
 
-// Icon centered inside cell
+// Icon centered inside cell, pushed down to leave room for label above
 const IC_X = (CW - ICON) / 2   // 42
-const IC_Y = 0
+const IC_Y = 18                 // space above icon for the name label
 
 // ── SVG Icons ─────────────────────────────────────────────────────────────────
 
@@ -69,10 +69,8 @@ function DockerIcon({ x, y }: { x: number; y: number }) {
 
 function EnvIcon({ x, y }: { x: number; y: number }) {
   return (
-    <svg x={x} y={y} width={ICON} height={ICON} viewBox="0 0 24 24" fill="none">
-      <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg x={x} y={y} width={ICON} height={ICON} viewBox="0 0 24 24" fill="#10b981">
+      <path d="M12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7zm7.43-2.47c.04-.32.07-.64.07-.97s-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65A.49.49 0 0 0 14 3h-4a.49.49 0 0 0-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 12c-.04.34-.07.67-.07 1s.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.08.73 1.69.98l.38 2.65c.09.42.46.42.49.42h4c.03 0 .4 0 .49-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66z"/>
     </svg>
   )
 }
@@ -327,17 +325,19 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
             {/* Hit area */}
             <rect x={pos.x} y={pos.y} width={CW} height={CH} fill="transparent" />
             <NodeIcon x={ix} y={iy} name={node.label} type={node.type} roleColor={roleColor} />
+            {/* Label above icon */}
             <text
-              x={pos.x + CW / 2} y={pos.y + IC_Y + ICON + 16}
+              x={pos.x + CW / 2} y={pos.y + IC_Y - 5}
               textAnchor="middle" fontSize="11" fontWeight="500"
               fill="var(--text)" fontFamily="Inter, system-ui, sans-serif"
               style={{ pointerEvents: 'none' }}
             >
               {node.label.length > 14 ? node.label.slice(0, 13) + '…' : node.label}
             </text>
+            {/* Role badge below icon */}
             {node.role && (
               <text
-                x={pos.x + CW / 2} y={pos.y + IC_Y + ICON + 32}
+                x={pos.x + CW / 2} y={pos.y + IC_Y + ICON + 14}
                 textAnchor="middle" fontSize="9" fill={roleColor} opacity={0.85}
                 fontFamily="Inter, system-ui, sans-serif"
                 style={{ pointerEvents: 'none' }}
