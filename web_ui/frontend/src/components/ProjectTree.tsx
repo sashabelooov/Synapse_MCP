@@ -217,10 +217,10 @@ export default function ProjectTree() {
         position: 'absolute', top: 0, left: 0, right: 0, height: 53, zIndex: 10,
         pointerEvents: 'none',
       }}>
-        {/* Pill — pinned to exact horizontal center of the viewport */}
+        {/* Pill — left-aligned after the hamburger button */}
         <div style={{
-          position: 'absolute', top: '50%', left: '50%',
-          transform: 'translate(-50%, -50%)',
+          position: 'absolute', top: '50%', left: 96,
+          transform: 'translateY(-50%)',
           display: 'flex', background: 'var(--bg-input)', borderRadius: 9999,
           padding: 3, gap: 2, border: '1px solid var(--border)', pointerEvents: 'auto',
           whiteSpace: 'nowrap',
@@ -267,8 +267,9 @@ export default function ProjectTree() {
             style={{
               position: 'absolute',
               top: '64px',
-              left: '16px',
-              width: '300px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: '340px',
               maxHeight: 'calc(100vh - 88px)',
               display: 'flex',
               flexDirection: 'column',
