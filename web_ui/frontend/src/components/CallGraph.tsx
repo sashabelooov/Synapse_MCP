@@ -5,7 +5,7 @@ import ReactFlow, {
   NodeProps, Handle, Position, useNodesState, useEdgesState,
   MarkerType, Node, Edge,
 } from 'reactflow'
-import { Loader2, Search, Zap, X, Code2, Cpu } from 'lucide-react'
+import { Loader2, Search, Zap, X, Cpu } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useStore } from '../store/useStore'
@@ -336,18 +336,7 @@ function CodePanel({ data, projectPath, onClose }: {
 
   const c = (data?.color as string) ?? 'var(--accent)'
 
-  if (!data) return (
-    <div style={{
-      width: '30%', flexShrink: 0, display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', gap: 10,
-      borderLeft: '1px solid var(--border)', background: 'var(--bg-card)',
-    }}>
-      <Code2 size={32} style={{ color: 'var(--text-faint)' }} />
-      <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.7 }}>
-        Click any function<br />to view source code
-      </span>
-    </div>
-  )
+  if (!data) return null
 
   return (
     <div style={{

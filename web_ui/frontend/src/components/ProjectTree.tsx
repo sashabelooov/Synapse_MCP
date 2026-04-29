@@ -214,17 +214,20 @@ export default function ProjectTree() {
     <div style={{ position: 'relative', height: '100%' }}>
       {/* Toolbar */}
       <div style={{
-        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '12px 16px 12px 96px', pointerEvents: 'none',
+        position: 'absolute', top: 0, left: 0, right: 0, height: 53, zIndex: 10,
+        pointerEvents: 'none',
       }}>
+        {/* Pill — pinned to exact horizontal center of the viewport */}
         <div style={{
+          position: 'absolute', top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)',
           display: 'flex', background: 'var(--bg-input)', borderRadius: 9999,
           padding: 3, gap: 2, border: '1px solid var(--border)', pointerEvents: 'auto',
+          whiteSpace: 'nowrap',
         }}>
           {([
-            { mode: 'list' as ViewMode, dir: null, Icon: List, label: 'ORIGINAL STRUCTURE' },
-            { mode: 'graph' as ViewMode, dir: 'TB', Icon: ArrowDown, label: 'TOP-BOTTOM' },
+            { mode: 'list' as ViewMode, dir: null,  Icon: List,       label: 'ORIGINAL STRUCTURE' },
+            { mode: 'graph' as ViewMode, dir: 'TB', Icon: ArrowDown,  label: 'TOP-BOTTOM' },
             { mode: 'graph' as ViewMode, dir: 'LR', Icon: ArrowRight, label: 'LEFT-RIGHT' },
           ]).map(({ mode, dir, Icon, label }) => {
             const active = viewMode === mode && (mode === 'list' || direction === dir)
@@ -246,7 +249,11 @@ export default function ProjectTree() {
             )
           })}
         </div>
-        <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)', pointerEvents: 'none' }}>
+        {/* Hint text — far right */}
+        <span style={{
+          position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)',
+          fontSize: 11, color: 'var(--text-muted)',
+        }}>
           {viewMode === 'graph' ? 'Drag · Scroll to zoom · Pan canvas' : 'Click folders to expand'}
         </span>
       </div>
@@ -270,52 +277,6 @@ export default function ProjectTree() {
               zIndex: 5,
             }}
           >
-            {/* Role filter section */}
-            <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-              <p style={{
-                fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em',
-                color: 'var(--text-muted)', marginBottom: '8px',
-              }}>
-                File Roles
-                {activeRoles.size > 0 && (
-                  <span style={{ color: 'var(--accent)', marginLeft: 6 }}>· {activeRoles.size} active</span>
-                )}
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                {Object.entries(ROLE_COLOR).map(([role, color]) => {
-                  const isActive = activeRoles.has(role)
-                  return (
-                    <button
-                      key={role}
-                      onClick={() => toggleRole(role)}
-                      style={{
-                        fontSize: '10px', padding: '2px 8px', borderRadius: '9999px',
-                        border: `1px solid ${isActive ? color : `${color}40`}`,
-                        background: isActive ? `${color}33` : `${color}0d`,
-                        color: isActive ? color : `${color}88`,
-                        cursor: 'pointer', transition: 'all 0.15s',
-                        fontWeight: isActive ? 600 : 400,
-                      }}
-                    >
-                      {role}
-                    </button>
-                  )
-                })}
-                {activeRoles.size > 0 && (
-                  <button
-                    onClick={() => setActiveRoles(new Set())}
-                    style={{
-                      fontSize: '10px', padding: '2px 8px', borderRadius: '9999px',
-                      border: '1px solid var(--border)', background: 'transparent',
-                      color: 'var(--text-muted)', cursor: 'pointer', transition: 'all 0.15s',
-                    }}
-                  >
-                    clear
-                  </button>
-                )}
-              </div>
-            </div>
-
             {/* File tree */}
             <div style={{ overflowY: 'auto', flex: 1, padding: '6px 0' }}>
               {tree && <FileNode node={tree} depth={0} activeRoles={activeRoles} />}
