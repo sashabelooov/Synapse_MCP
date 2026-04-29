@@ -203,10 +203,23 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
     nodes.forEach(n => { pos[n.id] = { x: n.x, y: n.y } })
     setPositions(pos)
     if (nodes.length) {
-      const pad = 100
-      const maxX = Math.max(...nodes.map(n => n.x + CW)) + pad
-      const maxY = Math.max(...nodes.map(n => n.y + CH)) + pad
-      setViewBox({ x: -pad, y: -pad, w: maxX + pad, h: maxY + pad })
+      const pad = 80
+      const MAX_W = 1100
+      const MAX_H = 700
+      const totalW = Math.max(...nodes.map(n => n.x + CW)) + pad * 2
+      const totalH = Math.max(...nodes.map(n => n.y + CH)) + pad * 2
+      const vbW = Math.min(totalW, MAX_W)
+      const vbH = Math.min(totalH, MAX_H)
+
+      // nodes[0] is the root (placed first in buildGraph)
+      const rootNode = nodes[0]
+      if (direction === 'LR') {
+        // Root is at x≈0 — start viewport just before it, center vertically on it
+        setViewBox({ x: rootNode.x - pad, y: rootNode.y + CH / 2 - vbH / 2, w: vbW, h: vbH })
+      } else {
+        // Root is at y≈0 — start viewport just above it, center horizontally on it
+        setViewBox({ x: rootNode.x + CW / 2 - vbW / 2, y: rootNode.y - pad, w: vbW, h: vbH })
+      }
     }
   }, [root, direction])
 
@@ -325,8 +338,8 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
             <rect x={pos.x} y={pos.y} width={CW} height={CH} fill="transparent" />
             <NodeIcon x={ix} y={iy} name={node.label} type={node.type} roleColor={roleColor} />
             <text
-              x={pos.x + CW / 2} y={pos.y + IC_Y + ICON + 16}
-              textAnchor="middle" fontSize="11" fontWeight="500"
+              x={pos.x + CW / 2} y={pos.y + IC_Y + ICON + 17}
+              textAnchor="middle" fontSize="12" fontWeight="600"
               fill="var(--text)" fontFamily="Inter, system-ui, sans-serif"
               style={{ pointerEvents: 'none' }}
             >
@@ -334,8 +347,8 @@ export default function DraggableTreeGraph({ root, direction }: Props) {
             </text>
             {node.role && (
               <text
-                x={pos.x + CW / 2} y={pos.y + IC_Y + ICON + 30}
-                textAnchor="middle" fontSize="9" fill={roleColor} opacity={0.85}
+                x={pos.x + CW / 2} y={pos.y + IC_Y + ICON + 31}
+                textAnchor="middle" fontSize="10" fontWeight="500" fill={roleColor} opacity={0.9}
                 fontFamily="Inter, system-ui, sans-serif"
                 style={{ pointerEvents: 'none' }}
               >

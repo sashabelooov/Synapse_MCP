@@ -64,6 +64,7 @@ def build_call_graph(functions: list[dict], calls: list[dict]) -> dict:
                 "label": func.get("name", "?"),
                 "qualified_name": func.get("qualified_name", ""),
                 "file_role": func.get("file_role", "module"),
+                "relative_path": func.get("relative_path", ""),
                 "is_async": func.get("is_async", False),
                 "color": color,
                 "line_start": func.get("line_start"),

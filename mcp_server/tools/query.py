@@ -26,7 +26,7 @@ async def get_call_graph(path: str, function_name: str = None) -> dict:
         if function_name:
             # Subgraph starting from a specific function
             cur = await db.execute(
-                "SELECT f.*, fi.file_role FROM functions f JOIN files fi ON fi.id=f.file_id "
+                "SELECT f.*, fi.file_role, fi.relative_path FROM functions f JOIN files fi ON fi.id=f.file_id "
                 "WHERE fi.project_id=? AND f.name=? LIMIT 1",
                 (pid, function_name),
             )
@@ -37,7 +37,7 @@ async def get_call_graph(path: str, function_name: str = None) -> dict:
             func_ids = await _reachable_ids(db, root["id"], max_depth=6)
             functions = await fetch_all_as_dicts(
                 db,
-                f"SELECT f.*, fi.file_role FROM functions f JOIN files fi ON fi.id=f.file_id "
+                f"SELECT f.*, fi.file_role, fi.relative_path FROM functions f JOIN files fi ON fi.id=f.file_id "
                 f"WHERE f.id IN ({','.join('?'*len(func_ids))})",
                 tuple(func_ids),
             )
@@ -49,7 +49,7 @@ async def get_call_graph(path: str, function_name: str = None) -> dict:
         else:
             functions = await fetch_all_as_dicts(
                 db,
-                "SELECT f.*, fi.file_role FROM functions f JOIN files fi ON fi.id=f.file_id WHERE fi.project_id=?",
+                "SELECT f.*, fi.file_role, fi.relative_path FROM functions f JOIN files fi ON fi.id=f.file_id WHERE fi.project_id=?",
                 (pid,),
             )
             calls = await fetch_all_as_dicts(

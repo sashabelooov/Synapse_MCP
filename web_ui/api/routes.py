@@ -77,6 +77,24 @@ async def api_trace_detail(trace_id: int, path: str = Query(...)):
     return await get_trace_detail(path, trace_id)
 
 
+@router.get("/function-source")
+async def api_function_source(
+    path: str = Query(...),
+    file: str = Query(...),
+    line_start: int = Query(None),
+    line_end: int = Query(None),
+):
+    project_path = Path(path).resolve()
+    file_path = project_path / file
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    lines = file_path.read_text(errors="replace").splitlines()
+    start = max(0, (line_start or 1) - 1)
+    end = min(len(lines), line_end or (start + 30))
+    source = "\n".join(lines[start:end])
+    return {"ok": True, "source": source, "line_start": start + 1, "line_end": end}
+
+
 @router.get("/projects")
 async def api_projects():
     """List all previously analyzed projects from any known db paths."""
