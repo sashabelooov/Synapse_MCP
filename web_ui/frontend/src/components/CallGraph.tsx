@@ -10,8 +10,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useStore } from '../store/useStore'
 
-// ── Theme-aware colors ────────────────────────────────────────────────────────
-
+// ── Role colors ───────────────────────────────────────────────────────────────
 const ROLE_COLOR: Record<string, string> = {
   entrypoint: '#7c3aed', router: '#7c3aed', view: '#7c3aed',
   service:    '#059669', repository: '#059669',
@@ -22,24 +21,15 @@ const ROLE_COLOR: Record<string, string> = {
 const rc = (role: string) => ROLE_COLOR[role] ?? '#64748b'
 
 // ── Layout constants ──────────────────────────────────────────────────────────
+const D = 72          // circle diameter
+const LEVEL_H = 130   // vertical distance between tree levels
+const H_GAP = 28      // horizontal gap between sibling circles
+const TREE_GAP = 80   // gap between separate trees
 
-const CW = 210      // chip width
-const CH = 40       // chip height
-const CGY = 12      // chip gap vertical
-const LGX = 50      // gap between layers (between chip right-edge and next left-edge)
-const LSX = CW + LGX // layer step x = 260
-const LBL_H = 30    // cluster label height
-const CPX = 22      // cluster padding x
-const CPY = 14      // cluster padding y
-const CLGX = 80     // gap between clusters x
-const CLGY = 60     // gap between clusters y
-
-// ── Focus context (uses React Flow node id, not data.id) ─────────────────────
-
+// ── Focus context ─────────────────────────────────────────────────────────────
 const FocusCtx = createContext<Set<string>>(new Set())
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
 interface FlatNode {
   id: string
   data: {
@@ -48,160 +38,136 @@ interface FlatNode {
     line_start: number | null; line_end: number | null
   }
 }
+
 interface RFNode extends Node { data: Record<string, unknown> }
 
-// ── Cluster layout builder ────────────────────────────────────────────────────
+// ── Tree layout algorithm ─────────────────────────────────────────────────────
+interface LayoutNode { id: string; x: number; y: number; subtreeW: number }
 
-function buildClusters(flat: FlatNode[], rawEdges: Record<string, unknown>[]): { nodes: RFNode[]; edges: Edge[] } {
+function computeTreeLayout(
+  rootId: string,
+  depth: number,
+  leftBound: number,
+  children: Map<string, string[]>,
+  visited: Set<string>,
+  result: Map<string, LayoutNode>,
+): number {
+  if (visited.has(rootId)) {
+    // cycle — place as leaf
+    const w = D + H_GAP
+    result.set(rootId + '_' + depth, { id: rootId, x: leftBound + w / 2, y: depth * LEVEL_H, subtreeW: w })
+    return w
+  }
+  visited.add(rootId)
+
+  const kids = (children.get(rootId) ?? []).filter(c => !visited.has(c))
+
+  if (kids.length === 0) {
+    const w = D + H_GAP
+    result.set(rootId, { id: rootId, x: leftBound + w / 2, y: depth * LEVEL_H, subtreeW: w })
+    return w
+  }
+
+  let curX = leftBound
+  let totalW = 0
+  for (const kid of kids) {
+    const w = computeTreeLayout(kid, depth + 1, curX, children, visited, result)
+    curX += w
+    totalW += w
+  }
+
+  const cx = leftBound + totalW / 2
+  result.set(rootId, { id: rootId, x: cx, y: depth * LEVEL_H, subtreeW: totalW })
+  return totalW
+}
+
+function buildTree(
+  flat: FlatNode[],
+  rawEdges: { id: string; source: string; target: string; label?: string }[],
+): { nodes: RFNode[]; edges: Edge[] } {
   if (!flat.length) return { nodes: [], edges: [] }
 
-  const nodeMap = new Map(flat.map(n => [n.id, n]))
   const ids = new Set(flat.map(n => n.id))
+  const nodeMap = new Map(flat.map(n => [n.id, n]))
 
-  // Valid edges (both endpoints exist, no self-loops)
-  const validEdges = (rawEdges as { id: string; source: string; target: string; label?: string }[])
-    .filter(e => ids.has(e.source) && ids.has(e.target) && e.source !== e.target)
+  const validEdges = rawEdges.filter(
+    e => ids.has(e.source) && ids.has(e.target) && e.source !== e.target,
+  )
 
-  // Undirected adjacency for connected-components
-  const uadj = new Map<string, Set<string>>()
-  for (const n of flat) uadj.set(n.id, new Set())
+  // Build directed children map and compute in-degree
+  const children = new Map<string, string[]>()
+  const inDegree = new Map<string, number>()
+  for (const n of flat) { children.set(n.id, []); inDegree.set(n.id, 0) }
   for (const e of validEdges) {
-    uadj.get(e.source)?.add(e.target)
-    uadj.get(e.target)?.add(e.source)
+    children.get(e.source)!.push(e.target)
+    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1)
   }
 
-  // Directed adjacency for layering
-  const dadj = new Map<string, Set<string>>()
-  const inDeg = new Map<string, number>()
-  for (const n of flat) { dadj.set(n.id, new Set()); inDeg.set(n.id, 0) }
+  // Find connected components (undirected)
+  const uAdj = new Map<string, Set<string>>()
+  for (const n of flat) uAdj.set(n.id, new Set())
   for (const e of validEdges) {
-    dadj.get(e.source)?.add(e.target)
-    inDeg.set(e.target, (inDeg.get(e.target) ?? 0) + 1)
+    uAdj.get(e.source)!.add(e.target)
+    uAdj.get(e.target)!.add(e.source)
   }
 
-  // Find connected components (BFS undirected)
-  const visited = new Set<string>()
+  const compVisited = new Set<string>()
   const components: string[][] = []
   for (const nid of ids) {
-    if (visited.has(nid)) continue
+    if (compVisited.has(nid)) continue
     const comp: string[] = []
-    const q = [nid]; visited.add(nid)
+    const q = [nid]; compVisited.add(nid)
     while (q.length) {
       const cur = q.shift()!; comp.push(cur)
-      for (const nb of uadj.get(cur) ?? []) {
-        if (!visited.has(nb)) { visited.add(nb); q.push(nb) }
+      for (const nb of uAdj.get(cur) ?? []) {
+        if (!compVisited.has(nb)) { compVisited.add(nb); q.push(nb) }
       }
     }
     components.push(comp)
   }
+  // Largest components first
   components.sort((a, b) => b.length - a.length)
-
-  // Compute layers within each component (directed BFS → topological layers)
-  interface ClusterInfo {
-    comp: string[]; compSet: Set<string>
-    layers: string[][]
-    w: number; h: number
-  }
-
-  const clInfos: ClusterInfo[] = components.map(comp => {
-    const compSet = new Set(comp)
-    const localIn = new Map(comp.map(n => [n, 0]))
-    for (const e of validEdges) {
-      if (compSet.has(e.source) && compSet.has(e.target))
-        localIn.set(e.target, (localIn.get(e.target) ?? 0) + 1)
-    }
-
-    const layers: string[][] = []
-    const placed = new Set<string>()
-    let frontier = comp.filter(n => localIn.get(n) === 0)
-    if (!frontier.length) frontier = [comp[0]]
-
-    while (frontier.length) {
-      layers.push(frontier)
-      frontier.forEach(n => placed.add(n))
-      const next: string[] = []
-      for (const n of frontier) {
-        for (const nb of dadj.get(n) ?? []) {
-          if (compSet.has(nb) && !placed.has(nb) && !next.includes(nb)) next.push(nb)
-        }
-      }
-      frontier = next
-    }
-    // Remaining (cycles)
-    const remaining = comp.filter(n => !placed.has(n))
-    if (remaining.length) layers.push(remaining)
-
-    const nL = layers.length
-    const maxRow = Math.max(...layers.map(l => l.length))
-    const w = 2 * CPX + nL * CW + (nL - 1) * LGX
-    const h = LBL_H + CPY + maxRow * CH + Math.max(0, maxRow - 1) * CGY + CPY
-    return { comp, compSet, layers, w, h }
-  })
-
-  // Place clusters: bin-pack into 3 columns (shortest column first)
-  const N_COLS = Math.min(3, clInfos.length)
-  const colY = Array(N_COLS).fill(0)
-  const maxW = Math.max(...clInfos.map(c => c.w), 300)
-  const colStep = maxW + CLGX
 
   const rfNodes: RFNode[] = []
   const rfEdges: Edge[] = []
+  let offsetX = 0
 
-  for (let ci = 0; ci < clInfos.length; ci++) {
-    const { comp, compSet, layers, w, h } = clInfos[ci]
+  for (const comp of components) {
+    const compSet = new Set(comp)
 
-    // Pick column with minimum Y
-    const col = colY.indexOf(Math.min(...colY))
-    const clx = col * colStep
-    const cly = colY[col]
-    colY[col] += h + CLGY
+    // Root = node with lowest in-degree in this component, tie-break by most children
+    const root = comp.slice().sort((a, b) => {
+      const degDiff = (inDegree.get(a) ?? 0) - (inDegree.get(b) ?? 0)
+      if (degDiff !== 0) return degDiff
+      return (children.get(b)?.length ?? 0) - (children.get(a)?.length ?? 0)
+    })[0]
 
-    // Dominant role for cluster color
-    const roleCnt = new Map<string, number>()
+    const layoutMap = new Map<string, LayoutNode>()
+    const treeVisited = new Set<string>()
+    const totalW = computeTreeLayout(root, 0, 0, children, treeVisited, layoutMap)
+
+    // Place any unvisited nodes in component (disconnected in directed sense) as extra rows
+    let extraRow = 0
     for (const nid of comp) {
-      const r = nodeMap.get(nid)?.data.file_role ?? 'module'
-      roleCnt.set(r, (roleCnt.get(r) ?? 0) + 1)
-    }
-    const topRole = [...roleCnt.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'module'
-    const clColor = rc(topRole)
-    const clLabel = comp.length === 1
-      ? (nodeMap.get(comp[0])?.data.relative_path?.split('/').pop() ?? 'module')
-      : `${comp.length} functions · ${nodeMap.get(comp[0])?.data.relative_path?.split('/').pop() ?? ''}`
-
-    // Background cluster node
-    rfNodes.push({
-      id: `cl__${ci}`,
-      type: 'clusterNode',
-      position: { x: clx, y: cly },
-      data: { label: clLabel, color: clColor },
-      style: { width: w, height: h, zIndex: -2, pointerEvents: 'none' },
-      selectable: false,
-      focusable: false,
-    } as RFNode)
-
-    // Chip nodes
-    const maxRow = Math.max(...layers.map(l => l.length))
-    const maxChipH = maxRow * CH + Math.max(0, maxRow - 1) * CGY
-
-    for (let li = 0; li < layers.length; li++) {
-      const layer = layers[li]
-      const lx = clx + CPX + li * LSX
-      const layerChipH = layer.length * CH + Math.max(0, layer.length - 1) * CGY
-      const startY = cly + LBL_H + CPY + (maxChipH - layerChipH) / 2
-
-      for (let ni = 0; ni < layer.length; ni++) {
-        const nid = layer[ni]
-        const fn = nodeMap.get(nid)
-        if (!fn) continue
-        const color = rc(fn.data.file_role)
-        rfNodes.push({
-          id: nid,
-          type: 'chipNode',
-          position: { x: lx, y: startY + ni * (CH + CGY) },
-          data: { ...fn.data, color, nodeId: nid, execOrder: li + 1 },
-          style: { width: CW, height: CH, zIndex: 10 },
-        })
+      if (!layoutMap.has(nid)) {
+        extraRow++
+        layoutMap.set(nid, { id: nid, x: totalW / 2 + extraRow * (D + H_GAP), y: 0, subtreeW: D + H_GAP })
       }
+    }
+
+    // Convert to RF nodes
+    for (const [key, lay] of layoutMap) {
+      const nid = lay.id
+      const fn = nodeMap.get(nid)
+      if (!fn) continue
+      const color = rc(fn.data.file_role)
+      rfNodes.push({
+        id: key === nid ? nid : key, // handle duplicate-key cycles
+        type: 'circleNode',
+        position: { x: offsetX + lay.x - D / 2, y: lay.y - D / 2 },
+        data: { ...fn.data, color, nodeId: nid },
+        style: { width: D, height: D },
+      })
     }
 
     // Edges within component
@@ -211,110 +177,96 @@ function buildClusters(flat: FlatNode[], rawEdges: Record<string, unknown>[]): {
           id: e.id,
           source: e.source, target: e.target,
           type: 'smoothstep', animated: false,
-          style: { stroke: '#64748b', strokeWidth: 1.5, strokeOpacity: 0.55 },
+          style: { stroke: '#64748b', strokeWidth: 1.5, strokeOpacity: 0.6 },
           markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b', width: 12, height: 12 },
         })
       }
     }
+
+    offsetX += totalW + TREE_GAP
   }
 
   return { nodes: rfNodes, edges: rfEdges }
 }
 
-// ── Cluster background node ───────────────────────────────────────────────────
-
-function ClusterNode({ data }: NodeProps) {
-  const c = data.color as string
-  return (
-    <div style={{
-      width: '100%', height: '100%',
-      background: `${c}18`,
-      border: `1.5px solid ${c}55`,
-      borderRadius: 14,
-      pointerEvents: 'none',
-    }}>
-      <div style={{
-        padding: '6px 14px',
-        fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
-        color: c,
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        borderBottom: `1px solid ${c}35`,
-      }}>
-        {data.label as string}
-      </div>
-    </div>
-  )
-}
-
-// ── Chip node (pill-shaped function) ─────────────────────────────────────────
-
-function ChipNode({ id, data, selected }: NodeProps) {
+// ── Circle node ───────────────────────────────────────────────────────────────
+function CircleNode({ id, data, selected }: NodeProps) {
   const focusedIds = useContext(FocusCtx)
   const isDimmed = focusedIds.size > 0 && !focusedIds.has(id)
   const c = data.color as string
 
   return (
     <div style={{
-      width: '100%', height: '100%',
-      display: 'flex', alignItems: 'center', gap: 7,
-      padding: '4px 10px 4px 5px',
-      background: selected ? `${c}18` : 'var(--bg-card)',
-      border: `1.5px solid ${selected ? c : `${c}40`}`,
-      borderRadius: 999,
+      width: D, height: D,
+      borderRadius: '50%',
+      background: selected ? `${c}22` : 'var(--bg-card)',
+      border: `2.5px solid ${selected ? c : `${c}80`}`,
       boxShadow: selected
-        ? `0 0 0 2px ${c}28, 0 2px 10px rgba(0,0,0,0.25)`
-        : '0 1px 3px rgba(0,0,0,0.12)',
+        ? `0 0 0 3px ${c}30, 0 4px 18px rgba(0,0,0,0.3)`
+        : `0 2px 8px rgba(0,0,0,0.18)`,
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
       cursor: 'pointer',
-      transition: 'opacity 0.18s ease, border-color 0.12s',
-      opacity: isDimmed ? 0.15 : 1,
+      transition: 'opacity 0.18s ease, border-color 0.12s, box-shadow 0.12s',
+      opacity: isDimmed ? 0.12 : 1,
+      position: 'relative',
+      overflow: 'visible',
     }}>
-      <Handle type="target" position={Position.Left}
-        style={{ background: c, width: 6, height: 6, border: '2px solid var(--bg-card)', left: -4 }} />
+      <Handle
+        type="target"
+        position={Position.Top}
+        style={{ background: c, width: 7, height: 7, border: '2px solid var(--bg-card)', top: -4 }}
+      />
 
-      {/* Execution order badge */}
+      {/* Icon */}
       <div style={{
-        width: 16, height: 16, borderRadius: '50%',
-        background: c, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 8, fontWeight: 800, color: '#fff', flexShrink: 0,
-      }}>
-        {data.execOrder as number}
-      </div>
-
-      {/* Icon bubble */}
-      <div style={{
-        width: 22, height: 22, borderRadius: '50%',
-        background: `${c}15`, border: `1.5px solid ${c}35`,
+        width: 28, height: 28, borderRadius: '50%',
+        background: `${c}20`, border: `1.5px solid ${c}50`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0,
+        marginBottom: 3,
       }}>
-        <Cpu size={10} style={{ color: c }} />
+        <Cpu size={13} style={{ color: c }} />
       </div>
 
-      <span style={{
-        fontSize: 12, fontWeight: 600, color: 'var(--text)',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
-      }}>
-        {data.label as string}
-      </span>
-
+      {/* async badge */}
       {!!data.is_async && (
-        <span style={{
-          fontSize: 8, fontWeight: 700, color: c,
-          background: `${c}15`, padding: '1px 5px',
-          borderRadius: 999, flexShrink: 0, letterSpacing: '0.04em',
-        }}>async</span>
+        <div style={{
+          position: 'absolute', top: -6, right: -4,
+          fontSize: 7, fontWeight: 800, color: '#fff',
+          background: c, padding: '1px 4px',
+          borderRadius: 99, letterSpacing: '0.04em',
+        }}>
+          async
+        </div>
       )}
 
-      <Handle type="source" position={Position.Right}
-        style={{ background: c, width: 6, height: 6, border: '2px solid var(--bg-card)', right: -4 }} />
+      {/* Label below circle */}
+      <div style={{
+        position: 'absolute',
+        top: D + 6,
+        left: '50%', transform: 'translateX(-50%)',
+        whiteSpace: 'nowrap',
+        fontSize: 10, fontWeight: 600,
+        color: isDimmed ? 'var(--text-faint)' : 'var(--text)',
+        pointerEvents: 'none',
+        maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis',
+        textAlign: 'center',
+      }}>
+        {data.label as string}
+      </div>
+
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        style={{ background: c, width: 7, height: 7, border: '2px solid var(--bg-card)', bottom: -4 }}
+      />
     </div>
   )
 }
 
-const nodeTypes = { clusterNode: ClusterNode, chipNode: ChipNode }
+const nodeTypes = { circleNode: CircleNode }
 
 // ── Code panel ────────────────────────────────────────────────────────────────
-
 function CodePanel({ data, projectPath, onClose }: {
   data: Record<string, unknown> | null
   projectPath: string
@@ -343,7 +295,6 @@ function CodePanel({ data, projectPath, onClose }: {
       width: '30%', flexShrink: 0, display: 'flex', flexDirection: 'column',
       borderLeft: '1px solid var(--border)', background: 'var(--bg-card)', overflow: 'hidden',
     }}>
-      {/* Header */}
       <div style={{
         padding: '10px 14px', borderBottom: '1px solid var(--border)',
         background: 'var(--bg-panel)', display: 'flex', alignItems: 'flex-start', gap: 8, flexShrink: 0,
@@ -355,9 +306,7 @@ function CodePanel({ data, projectPath, onClose }: {
               {String(data.label ?? '')}
             </span>
             {!!data.is_async && (
-              <span style={{ fontSize: 9, color: c, background: `${c}20`, padding: '1px 5px', borderRadius: 999, flexShrink: 0 }}>
-                async
-              </span>
+              <span style={{ fontSize: 9, color: c, background: `${c}20`, padding: '1px 5px', borderRadius: 999, flexShrink: 0 }}>async</span>
             )}
           </div>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -367,12 +316,10 @@ function CodePanel({ data, projectPath, onClose }: {
         </div>
         <button
           onClick={onClose}
-          title="Close"
           style={{
             background: 'var(--bg-input)', border: '1px solid var(--border)',
             borderRadius: 6, cursor: 'pointer', color: 'var(--text-muted)',
             padding: '4px 6px', display: 'flex', alignItems: 'center', flexShrink: 0,
-            transition: 'background 0.12s, color 0.12s',
           }}
           onMouseEnter={e => { e.currentTarget.style.background = 'var(--nav-hover)'; e.currentTarget.style.color = 'var(--text)' }}
           onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-input)'; e.currentTarget.style.color = 'var(--text-muted)' }}
@@ -381,10 +328,9 @@ function CodePanel({ data, projectPath, onClose }: {
         </button>
       </div>
 
-      {/* Source */}
       <div style={{ flex: 1, overflow: 'auto' }}>
         {loading && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', padding: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', padding: 14 }}>
             <Loader2 size={14} className="animate-spin" /> Loading…
           </div>
         )}
@@ -401,17 +347,14 @@ function CodePanel({ data, projectPath, onClose }: {
           </SyntaxHighlighter>
         )}
         {!loading && !source && (
-          <div style={{ padding: '14px', fontSize: 12, color: 'var(--text-muted)' }}>
-            No source available.
-          </div>
+          <div style={{ padding: 14, fontSize: 12, color: 'var(--text-muted)' }}>No source available.</div>
         )}
       </div>
     </div>
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
-
+// ── Main ──────────────────────────────────────────────────────────────────────
 export default function CallGraph() {
   const { projectPath } = useStore()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
@@ -430,8 +373,8 @@ export default function CallGraph() {
       if (fn) params.function_name = fn
       const { data } = await axios.get('/api/call-graph', { params })
       const flatNodes: FlatNode[] = data.nodes || []
-      const flatEdges: Record<string, unknown>[] = data.edges || []
-      const { nodes: n, edges: e } = buildClusters(flatNodes, flatEdges)
+      const flatEdges = (data.edges || []) as { id: string; source: string; target: string; label?: string }[]
+      const { nodes: n, edges: e } = buildTree(flatNodes, flatEdges)
       setStats({ funcs: flatNodes.length, edges: flatEdges.length })
       setNodes(n); setEdges(e)
     } finally {
@@ -447,24 +390,22 @@ export default function CallGraph() {
   }
 
   const handleNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    if (node.type !== 'chipNode') return
+    if (node.type !== 'circleNode') return
     const d = node.data as Record<string, unknown>
     setSelectedData(d)
 
-    // Find 1-hop neighbours using current edges ref
     const connected = new Set<string>([node.id])
     setEdges(eds => {
       eds.forEach(e => {
         if (e.source === node.id) connected.add(e.target)
         if (e.target === node.id) connected.add(e.source)
       })
-      // Highlight active edges
       return eds.map(e => {
         const active = e.source === node.id || e.target === node.id
         const col = active ? (d.color as string) : '#64748b'
         return {
           ...e, animated: active,
-          style: { stroke: col, strokeWidth: active ? 2 : 1.5, strokeOpacity: active ? 1 : 0.2 },
+          style: { stroke: col, strokeWidth: active ? 2 : 1.5, strokeOpacity: active ? 1 : 0.15 },
           markerEnd: { type: MarkerType.ArrowClosed, color: col, width: 12, height: 12 },
         }
       })
@@ -476,7 +417,7 @@ export default function CallGraph() {
     setSelectedData(null); setFocusedIds(new Set())
     setEdges(eds => eds.map(e => ({
       ...e, animated: false,
-      style: { stroke: '#64748b', strokeWidth: 1.5, strokeOpacity: 0.55 },
+      style: { stroke: '#64748b', strokeWidth: 1.5, strokeOpacity: 0.6 },
       markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b', width: 12, height: 12 },
     })))
   }, [setEdges])
@@ -492,7 +433,7 @@ export default function CallGraph() {
     <FocusCtx.Provider value={focusedIds}>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
 
-        {/* ── Toolbar ── */}
+        {/* Toolbar */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '8px 16px 8px 96px', flexShrink: 0,
@@ -500,7 +441,6 @@ export default function CallGraph() {
           background: 'var(--bg-panel)',
         }}>
           <form onSubmit={handleSearch} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {/* Search */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 6,
               background: 'var(--bg-input)', border: '1px solid var(--border)',
@@ -514,7 +454,6 @@ export default function CallGraph() {
                 onChange={e => setSearch(e.target.value)}
               />
             </div>
-            {/* Action button — same visual level as search */}
             <button type="submit" disabled={searching} style={{
               display: 'flex', alignItems: 'center', gap: 5,
               padding: '5px 12px', borderRadius: 8,
@@ -534,7 +473,6 @@ export default function CallGraph() {
             )}
           </form>
 
-          {/* Right side stats / focus clear */}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
             {focusedIds.size > 0 && (
               <button onClick={resetFocus} style={{
@@ -551,7 +489,7 @@ export default function CallGraph() {
           </div>
         </div>
 
-        {/* ── Canvas + Code panel ── */}
+        {/* Canvas + Code panel */}
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           <div style={{ flex: 1, position: 'relative' }}>
             <ReactFlow
@@ -563,7 +501,7 @@ export default function CallGraph() {
               onNodeClick={handleNodeClick}
               onPaneClick={resetFocus}
               fitView
-              fitViewOptions={{ padding: 0.1 }}
+              fitViewOptions={{ padding: 0.15 }}
               minZoom={0.04}
               maxZoom={2.5}
               attributionPosition="bottom-left"
@@ -571,7 +509,6 @@ export default function CallGraph() {
               <Background variant={BackgroundVariant.Dots} color="var(--border)" gap={22} size={1} />
               <Controls style={{ bottom: 16, left: 16, top: 'auto' }} />
 
-              {/* Hint */}
               {!selectedData && stats.funcs > 0 && (
                 <div style={{
                   position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
@@ -579,13 +516,12 @@ export default function CallGraph() {
                   backdropFilter: 'blur(8px)', borderRadius: 8, padding: '5px 14px',
                   fontSize: 11, color: 'var(--text-muted)', pointerEvents: 'none',
                 }}>
-                  Click any function chip to view source · Click canvas to clear focus
+                  Click any node to view source · Click canvas to clear focus
                 </div>
               )}
             </ReactFlow>
           </div>
 
-          {/* Code panel */}
           <CodePanel data={selectedData} projectPath={projectPath} onClose={resetFocus} />
         </div>
       </div>
