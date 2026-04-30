@@ -6,7 +6,7 @@ import { analyzeProject, buildTreeNode } from './analyzer/index.js'
 import { getDb } from './storage/database.js'
 import { getDbPath } from './config.js'
 import { buildCallGraph, buildDbGraph, getReachableIds } from './graph/builder.js'
-import { open } from 'open'
+import open from 'open'
 import { UI_HOST, UI_PORT } from './config.js'
 
 const server = new McpServer({
