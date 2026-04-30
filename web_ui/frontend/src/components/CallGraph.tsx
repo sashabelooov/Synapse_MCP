@@ -21,10 +21,10 @@ const ROLE_COLOR: Record<string, string> = {
 const rc = (role: string) => ROLE_COLOR[role] ?? '#64748b'
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-const D = 72          // circle diameter
-const LEVEL_H = 130   // vertical distance between tree levels
-const H_GAP = 28      // horizontal gap between sibling circles
-const TREE_GAP = 80   // gap between separate trees
+const D = 68          // circle diameter
+const LEVEL_H = 160   // vertical gap between tree levels
+const NODE_W = D + 44 // horizontal slot per leaf node
+const TREE_GAP = 120  // gap between separate trees
 
 // ── Focus context ─────────────────────────────────────────────────────────────
 const FocusCtx = createContext<Set<string>>(new Set())
@@ -41,44 +41,46 @@ interface FlatNode {
 
 interface RFNode extends Node { data: Record<string, unknown> }
 
-// ── Tree layout algorithm ─────────────────────────────────────────────────────
-interface LayoutNode { id: string; x: number; y: number; subtreeW: number }
+// ── Two-pass tree layout (Reingold-Tilford style) ─────────────────────────────
 
-function computeTreeLayout(
-  rootId: string,
-  depth: number,
-  leftBound: number,
+// Pass 1: compute the minimum subtree width needed for each node
+function subtreeWidth(
+  nid: string,
   children: Map<string, string[]>,
-  visited: Set<string>,
-  result: Map<string, LayoutNode>,
+  seen: Set<string>,
 ): number {
-  if (visited.has(rootId)) {
-    // cycle — place as leaf
-    const w = D + H_GAP
-    result.set(rootId + '_' + depth, { id: rootId, x: leftBound + w / 2, y: depth * LEVEL_H, subtreeW: w })
-    return w
+  const kids = (children.get(nid) ?? []).filter(c => !seen.has(c))
+  if (kids.length === 0) return NODE_W
+  seen.add(nid)
+  const total = kids.reduce((sum, kid) => sum + subtreeWidth(kid, children, new Set(seen)), 0)
+  return Math.max(total, NODE_W)
+}
+
+// Pass 2: place each node centered over its children
+function placeTree(
+  nid: string,
+  depth: number,
+  centerX: number,
+  children: Map<string, string[]>,
+  placed: Set<string>,
+  positions: Map<string, { x: number; y: number }>,
+) {
+  if (placed.has(nid)) return
+  placed.add(nid)
+  positions.set(nid, { x: centerX, y: depth * LEVEL_H })
+
+  const kids = (children.get(nid) ?? []).filter(c => !placed.has(c))
+  if (kids.length === 0) return
+
+  // Compute width of each child's subtree
+  const widths = kids.map(kid => subtreeWidth(kid, children, new Set(placed)))
+  const totalW = widths.reduce((a, b) => a + b, 0)
+
+  let x = centerX - totalW / 2
+  for (let i = 0; i < kids.length; i++) {
+    placeTree(kids[i], depth + 1, x + widths[i] / 2, children, placed, positions)
+    x += widths[i]
   }
-  visited.add(rootId)
-
-  const kids = (children.get(rootId) ?? []).filter(c => !visited.has(c))
-
-  if (kids.length === 0) {
-    const w = D + H_GAP
-    result.set(rootId, { id: rootId, x: leftBound + w / 2, y: depth * LEVEL_H, subtreeW: w })
-    return w
-  }
-
-  let curX = leftBound
-  let totalW = 0
-  for (const kid of kids) {
-    const w = computeTreeLayout(kid, depth + 1, curX, children, visited, result)
-    curX += w
-    totalW += w
-  }
-
-  const cx = leftBound + totalW / 2
-  result.set(rootId, { id: rootId, x: cx, y: depth * LEVEL_H, subtreeW: totalW })
-  return totalW
 }
 
 function buildTree(
@@ -94,7 +96,7 @@ function buildTree(
     e => ids.has(e.source) && ids.has(e.target) && e.source !== e.target,
   )
 
-  // Build directed children map and compute in-degree
+  // Directed children + in-degree
   const children = new Map<string, string[]>()
   const inDegree = new Map<string, number>()
   for (const n of flat) { children.set(n.id, []); inDegree.set(n.id, 0) }
@@ -103,7 +105,7 @@ function buildTree(
     inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1)
   }
 
-  // Find connected components (undirected)
+  // Connected components (undirected BFS)
   const uAdj = new Map<string, Set<string>>()
   for (const n of flat) uAdj.set(n.id, new Set())
   for (const e of validEdges) {
@@ -111,21 +113,20 @@ function buildTree(
     uAdj.get(e.target)!.add(e.source)
   }
 
-  const compVisited = new Set<string>()
+  const compSeen = new Set<string>()
   const components: string[][] = []
   for (const nid of ids) {
-    if (compVisited.has(nid)) continue
+    if (compSeen.has(nid)) continue
     const comp: string[] = []
-    const q = [nid]; compVisited.add(nid)
+    const q = [nid]; compSeen.add(nid)
     while (q.length) {
       const cur = q.shift()!; comp.push(cur)
       for (const nb of uAdj.get(cur) ?? []) {
-        if (!compVisited.has(nb)) { compVisited.add(nb); q.push(nb) }
+        if (!compSeen.has(nb)) { compSeen.add(nb); q.push(nb) }
       }
     }
     components.push(comp)
   }
-  // Largest components first
   components.sort((a, b) => b.length - a.length)
 
   const rfNodes: RFNode[] = []
@@ -135,55 +136,55 @@ function buildTree(
   for (const comp of components) {
     const compSet = new Set(comp)
 
-    // Root = node with lowest in-degree in this component, tie-break by most children
+    // Pick root: lowest in-degree, tie-break by most outgoing edges
     const root = comp.slice().sort((a, b) => {
-      const degDiff = (inDegree.get(a) ?? 0) - (inDegree.get(b) ?? 0)
-      if (degDiff !== 0) return degDiff
-      return (children.get(b)?.length ?? 0) - (children.get(a)?.length ?? 0)
+      const d = (inDegree.get(a) ?? 0) - (inDegree.get(b) ?? 0)
+      return d !== 0 ? d : (children.get(b)?.length ?? 0) - (children.get(a)?.length ?? 0)
     })[0]
 
-    const layoutMap = new Map<string, LayoutNode>()
-    const treeVisited = new Set<string>()
-    const totalW = computeTreeLayout(root, 0, 0, children, treeVisited, layoutMap)
+    // Two-pass layout
+    const positions = new Map<string, { x: number; y: number }>()
+    const placed = new Set<string>()
+    const rootW = subtreeWidth(root, children, new Set())
+    placeTree(root, 0, rootW / 2, children, placed, positions)
 
-    // Place any unvisited nodes in component (disconnected in directed sense) as extra rows
-    let extraRow = 0
+    // Any remaining (isolated in directed sense)
+    let orphanX = rootW + NODE_W
     for (const nid of comp) {
-      if (!layoutMap.has(nid)) {
-        extraRow++
-        layoutMap.set(nid, { id: nid, x: totalW / 2 + extraRow * (D + H_GAP), y: 0, subtreeW: D + H_GAP })
+      if (!positions.has(nid)) {
+        positions.set(nid, { x: orphanX, y: 0 })
+        orphanX += NODE_W
       }
     }
 
-    // Convert to RF nodes
-    for (const [key, lay] of layoutMap) {
-      const nid = lay.id
+    // Emit RF nodes
+    for (const [nid, pos] of positions) {
       const fn = nodeMap.get(nid)
       if (!fn) continue
       const color = rc(fn.data.file_role)
       rfNodes.push({
-        id: key === nid ? nid : key, // handle duplicate-key cycles
+        id: nid,
         type: 'circleNode',
-        position: { x: offsetX + lay.x - D / 2, y: lay.y - D / 2 },
-        data: { ...fn.data, color, nodeId: nid },
+        position: { x: offsetX + pos.x - D / 2, y: pos.y },
+        data: { ...fn.data, color },
         style: { width: D, height: D },
       })
     }
 
-    // Edges within component
+    // Emit edges
     for (const e of validEdges) {
       if (compSet.has(e.source) && compSet.has(e.target)) {
         rfEdges.push({
           id: e.id,
           source: e.source, target: e.target,
           type: 'smoothstep', animated: false,
-          style: { stroke: '#64748b', strokeWidth: 1.5, strokeOpacity: 0.6 },
+          style: { stroke: '#64748b', strokeWidth: 1.5, strokeOpacity: 0.65 },
           markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b', width: 12, height: 12 },
         })
       }
     }
 
-    offsetX += totalW + TREE_GAP
+    offsetX += rootW + TREE_GAP
   }
 
   return { nodes: rfNodes, edges: rfEdges }
