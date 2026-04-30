@@ -195,72 +195,75 @@ function CircleNode({ id, data, selected }: NodeProps) {
   const focusedIds = useContext(FocusCtx)
   const isDimmed = focusedIds.size > 0 && !focusedIds.has(id)
   const c = data.color as string
+  const isClass = !!data.is_class
+  // Classes: rounded square with color fill; functions: plain circle
+  const nodeSize = isClass ? D + 8 : D
 
   return (
     <div style={{
-      width: D, height: D,
-      borderRadius: '50%',
-      background: selected ? `${c}22` : 'var(--bg-card)',
-      border: `2.5px solid ${selected ? c : `${c}80`}`,
+      width: nodeSize, height: nodeSize,
+      borderRadius: isClass ? '14px' : '50%',
+      background: isClass
+        ? selected ? c : `${c}28`
+        : selected ? `${c}22` : 'var(--bg-card)',
+      border: `2.5px solid ${selected ? c : isClass ? `${c}90` : `${c}70`}`,
       boxShadow: selected
-        ? `0 0 0 3px ${c}30, 0 4px 18px rgba(0,0,0,0.3)`
-        : `0 2px 8px rgba(0,0,0,0.18)`,
+        ? `0 0 0 3px ${c}35, 0 4px 20px rgba(0,0,0,0.35)`
+        : `0 2px 10px rgba(0,0,0,0.2)`,
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
       cursor: 'pointer',
-      transition: 'opacity 0.18s ease, border-color 0.12s, box-shadow 0.12s',
-      opacity: isDimmed ? 0.12 : 1,
+      transition: 'opacity 0.18s ease, border-color 0.12s',
+      opacity: isDimmed ? 0.1 : 1,
       position: 'relative',
       overflow: 'visible',
     }}>
-      <Handle
-        type="target"
-        position={Position.Top}
-        style={{ background: c, width: 7, height: 7, border: '2px solid var(--bg-card)', top: -4 }}
-      />
+      <Handle type="target" position={Position.Top}
+        style={{ background: c, width: 7, height: 7, border: '2px solid var(--bg-card)', top: -4 }} />
 
       {/* Icon */}
       <div style={{
-        width: 28, height: 28, borderRadius: '50%',
-        background: `${c}20`, border: `1.5px solid ${c}50`,
+        width: isClass ? 32 : 28, height: isClass ? 32 : 28,
+        borderRadius: isClass ? '8px' : '50%',
+        background: isClass ? `rgba(255,255,255,0.15)` : `${c}20`,
+        border: `1.5px solid ${isClass ? 'rgba(255,255,255,0.3)' : `${c}50`}`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        marginBottom: 3,
       }}>
-        <Cpu size={13} style={{ color: c }} />
+        <Cpu size={isClass ? 15 : 13} style={{ color: isClass ? '#fff' : c }} />
       </div>
 
-      {/* async badge */}
-      {!!data.is_async && (
+      {/* class / async badge */}
+      {isClass && (
         <div style={{
-          position: 'absolute', top: -6, right: -4,
+          position: 'absolute', top: -8, left: '50%', transform: 'translateX(-50%)',
           fontSize: 7, fontWeight: 800, color: '#fff',
-          background: c, padding: '1px 4px',
-          borderRadius: 99, letterSpacing: '0.04em',
-        }}>
-          async
-        </div>
+          background: c, padding: '1px 5px', borderRadius: 99, letterSpacing: '0.06em',
+          whiteSpace: 'nowrap',
+        }}>CLASS</div>
+      )}
+      {!isClass && !!data.is_async && (
+        <div style={{
+          position: 'absolute', top: -7, right: -4,
+          fontSize: 7, fontWeight: 800, color: '#fff',
+          background: c, padding: '1px 4px', borderRadius: 99,
+        }}>async</div>
       )}
 
-      {/* Label below circle */}
+      {/* Label below node */}
       <div style={{
-        position: 'absolute',
-        top: D + 6,
+        position: 'absolute', top: nodeSize + 6,
         left: '50%', transform: 'translateX(-50%)',
-        whiteSpace: 'nowrap',
-        fontSize: 10, fontWeight: 600,
+        whiteSpace: 'nowrap', fontSize: isClass ? 11 : 10,
+        fontWeight: isClass ? 700 : 600,
         color: isDimmed ? 'var(--text-faint)' : 'var(--text)',
-        pointerEvents: 'none',
-        maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis',
-        textAlign: 'center',
+        pointerEvents: 'none', maxWidth: 120,
+        overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center',
       }}>
         {data.label as string}
       </div>
 
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        style={{ background: c, width: 7, height: 7, border: '2px solid var(--bg-card)', bottom: -4 }}
-      />
+      <Handle type="source" position={Position.Bottom}
+        style={{ background: c, width: 7, height: 7, border: '2px solid var(--bg-card)', bottom: -4 }} />
     </div>
   )
 }

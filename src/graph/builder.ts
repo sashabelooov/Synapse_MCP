@@ -77,6 +77,7 @@ export function buildCallGraph(functions: any[], calls: any[]): { nodes: any[]; 
       position: { x: col * COL_WIDTH, y: row * ROW_HEIGHT },
       data: {
         label: func.name,
+        is_class: !!func.is_class,
         qualified_name: func.qualified_name,
         file_role: func.file_role,
         relative_path: func.relative_path ?? '',

@@ -8,6 +8,7 @@ export interface FunctionInfo {
   lineStart: number
   lineEnd: number
   isAsync: boolean
+  isClass: boolean        // true for class definitions
   decorators: string[]
   parameters: string[]
   returnType: string | null
@@ -22,114 +23,176 @@ export interface RouteInfo {
   tags: string[]
 }
 
-export interface ModelField {
-  name: string
-  type: string
-}
-
+export interface ModelField { name: string; type: string }
 export interface ModelInfo {
-  name: string
-  tableName: string
-  file: string
-  fields: ModelField[]
+  name: string; tableName: string; file: string; fields: ModelField[]
 }
 
 export interface FileInfo {
   path: string
   relativePath: string
   fileRole: string
-  functions: FunctionInfo[]
+  functions: FunctionInfo[]  // includes class nodes + top-level functions
   routes: RouteInfo[]
   models: ModelInfo[]
 }
 
 export function parseFile(filePath: string, projectRoot: string): FileInfo | null {
   let source: string
-  try {
-    source = fs.readFileSync(filePath, 'utf8')
-  } catch {
-    return null
-  }
+  try { source = fs.readFileSync(filePath, 'utf8') } catch { return null }
 
   const relativePath = path.relative(projectRoot, filePath)
   const fileRole = inferRole(filePath)
   const moduleName = path.basename(filePath, '.py')
 
-  const functions = extractFunctions(source, moduleName)
+  const functions = extractAll(source, moduleName)
   const routes = extractRoutes(source)
   const models = extractModels(source, filePath)
 
   return { path: filePath, relativePath, fileRole, functions, routes, models }
 }
 
-function extractFunctions(source: string, moduleName: string): FunctionInfo[] {
+// ── Extract all classes AND top-level functions ───────────────────────────────
+function extractAll(source: string, moduleName: string): FunctionInfo[] {
   const lines = source.split('\n')
-  const functions: FunctionInfo[] = []
+  const result: FunctionInfo[] = []
+  const classRanges: Array<{ start: number; end: number; name: string }> = []
 
-  const fnHeaderRe = /^( *)(async )?def (\w+)\(([^)]*(?:\([^)]*\)[^)]*)*)\)(?:\s*->\s*([^:]+))?:/
-  const decoratorRe = /^( *)@(.+)/
-  const docstringRe = /^\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)''')/
-
+  // First: find all class definitions at indent=0
+  const classRe = /^class\s+(\w+)(?:\s*\([^)]*\))?\s*:/
   let i = 0
   while (i < lines.length) {
+    const m = lines[i].match(classRe)
+    if (m) {
+      const className = m[1]
+      const classStart = i
+      // Find class body end (next top-level non-blank line)
+      let classEnd = i + 1
+      let j = i + 1
+      while (j < lines.length) {
+        const l = lines[j]
+        if (l.trim() === '') { j++; continue }
+        const ind = l.match(/^( *)/)?.[1].length ?? 0
+        if (ind === 0) break
+        classEnd = j + 1
+        j++
+      }
+      classRanges.push({ start: classStart, end: classEnd, name: className })
+
+      // Class node itself
+      const bodyLines = lines.slice(classStart + 1, classEnd)
+      const classCalls = extractCallsFromBody(bodyLines, classStart + 1)
+      const decorators = collectDecorators(lines, classStart, 0)
+      // Extract docstring
+      let docstring: string | null = null
+      const bodyStr = bodyLines.slice(0, 5).join('\n')
+      const dm = bodyStr.match(/^\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)''')/)
+      if (dm) docstring = (dm[1] || dm[2]).trim()
+
+      // Bases as return type (so graph builder knows what it extends)
+      const basesMatch = lines[classStart].match(/class\s+\w+\s*\(([^)]+)\)/)
+      const bases = basesMatch ? basesMatch[1].trim() : null
+
+      result.push({
+        name: className,
+        qualifiedName: `${moduleName}.${className}`,
+        lineStart: classStart + 1,
+        lineEnd: classEnd,
+        isAsync: false,
+        isClass: true,
+        decorators,
+        parameters: [],
+        returnType: bases,
+        docstring,
+        calls: classCalls,
+      })
+
+      // Methods inside class
+      const methods = extractFunctionsInRange(lines, classStart + 1, classEnd, moduleName, className, 4)
+      result.push(...methods)
+
+      i = classEnd
+      continue
+    }
+    i++
+  }
+
+  // Top-level functions (not inside any class)
+  const topFns = extractFunctionsInRange(lines, 0, lines.length, moduleName, null, 0)
+  for (const fn of topFns) {
+    // Skip if inside a class range
+    const inside = classRanges.some(r => fn.lineStart >= r.start + 1 && fn.lineEnd <= r.end)
+    if (!inside) result.push(fn)
+  }
+
+  return result
+}
+
+function extractFunctionsInRange(
+  lines: string[],
+  fromLine: number,
+  toLine: number,
+  moduleName: string,
+  className: string | null,
+  expectedIndent: number,
+): FunctionInfo[] {
+  const result: FunctionInfo[] = []
+  const fnRe = /^( *)(async )?def (\w+)\(([^)]*(?:\([^)]*\)[^)]*)*)\)(?:\s*->\s*([^:]+))?:/
+  const decRe = /^( *)@(.+)/
+
+  let i = fromLine
+  while (i < toLine) {
     const line = lines[i]
-    const match = line.match(fnHeaderRe)
-    if (match) {
-      const indent = match[1].length
-      const isAsync = !!match[2]
-      const name = match[3]
-      const paramsStr = match[4]
-      const returnType = match[5]?.trim() || null
+    const m = line.match(fnRe)
+    if (m) {
+      const indent = m[1].length
+      if (indent !== expectedIndent) { i++; continue }
+
+      const isAsync = !!m[2]
+      const name = m[3]
+      if (name === '__init__' || name === '__str__' || name === '__repr__') { i++; continue }
+      const paramsStr = m[4]
+      const returnType = m[5]?.trim() || null
       const lineStart = i + 1
 
-      // Collect decorators above
-      const decorators: string[] = []
-      let dIdx = i - 1
-      while (dIdx >= 0) {
-        const dm = lines[dIdx].match(decoratorRe)
-        if (dm && dm[1].length === indent) {
-          decorators.unshift('@' + dm[2].trim())
-          dIdx--
-        } else break
-      }
+      const decorators = collectDecorators(lines, i, indent)
 
-      // Parse parameters
       const parameters = paramsStr
         .split(',')
         .map(p => p.trim().split(':')[0].split('=')[0].trim())
         .filter(p => p && p !== 'self' && p !== 'cls' && !p.startsWith('*'))
 
-      // Find function body end (next line at same or lower indent level, not blank)
+      // Find end of function
       let lineEnd = lineStart
       let j = i + 1
-      while (j < lines.length) {
-        const bodyLine = lines[j]
-        if (bodyLine.trim() === '') { j++; continue }
-        const bodyIndent = bodyLine.match(/^( *)/)?.[1].length ?? 0
-        if (bodyIndent <= indent) break
+      while (j < Math.min(toLine, lines.length)) {
+        const bl = lines[j]
+        if (bl.trim() === '') { j++; continue }
+        const bi = bl.match(/^( *)/)?.[1].length ?? 0
+        if (bi <= indent) break
         lineEnd = j + 1
         j++
       }
 
-      // Extract docstring
       let docstring: string | null = null
-      const bodyStart = i + 1
-      if (bodyStart < lines.length) {
-        const bodySlice = lines.slice(bodyStart, Math.min(bodyStart + 5, lines.length)).join('\n')
-        const docMatch = bodySlice.match(/^\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)''')/)
-        if (docMatch) docstring = (docMatch[1] || docMatch[2]).trim()
-      }
+      const bodySlice = lines.slice(i + 1, Math.min(i + 6, lineEnd)).join('\n')
+      const dm = bodySlice.match(/^\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)''')/)
+      if (dm) docstring = (dm[1] || dm[2]).trim()
 
-      // Extract calls within this function body
       const bodyLines = lines.slice(i + 1, lineEnd)
-      const calls = extractCalls(bodyLines, i + 1)
+      const calls = extractCallsFromBody(bodyLines, i + 1)
 
-      functions.push({
+      const qualifiedName = className
+        ? `${moduleName}.${className}.${name}`
+        : `${moduleName}.${name}`
+
+      result.push({
         name,
-        qualifiedName: `${moduleName}.${name}`,
+        qualifiedName,
         lineStart,
         lineEnd,
         isAsync,
+        isClass: false,
         decorators,
         parameters,
         returnType,
@@ -142,23 +205,41 @@ function extractFunctions(source: string, moduleName: string): FunctionInfo[] {
     }
     i++
   }
-
-  return functions
+  return result
 }
 
-function extractCalls(bodyLines: string[], baseLineNum: number): Array<{ calleeName: string; line: number }> {
+function collectDecorators(lines: string[], fnLine: number, indent: number): string[] {
+  const decRe = /^( *)@(.+)/
+  const decorators: string[] = []
+  let d = fnLine - 1
+  while (d >= 0) {
+    const dm = lines[d].match(decRe)
+    if (dm && dm[1].length === indent) {
+      decorators.unshift('@' + dm[2].trim())
+      d--
+    } else break
+  }
+  return decorators
+}
+
+function extractCallsFromBody(bodyLines: string[], base: number): Array<{ calleeName: string; line: number }> {
   const calls: Array<{ calleeName: string; line: number }> = []
-  // Match function calls: word( or word.word(
-  const callRe = /\b((?:\w+\.)*\w+)\s*\(/g
+  const callRe = /\b((?:[A-Z]\w*|[a-z]\w+)(?:\.\w+)*)\s*\(/g
+  const skip = new Set(['if', 'while', 'for', 'with', 'assert', 'print', 'len',
+    'str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple', 'range',
+    'type', 'isinstance', 'super', 'hasattr', 'getattr', 'setattr', 'open',
+    'enumerate', 'zip', 'map', 'filter', 'sorted', 'reversed', 'next', 'iter',
+    'min', 'max', 'sum', 'abs', 'round'])
 
   for (let i = 0; i < bodyLines.length; i++) {
     const line = bodyLines[i]
     let m: RegExpExecArray | null
     while ((m = callRe.exec(line)) !== null) {
       const name = m[1]
-      // Skip built-ins and keywords
-      if (['if', 'while', 'for', 'with', 'assert', 'print', 'len', 'str', 'int', 'list', 'dict', 'set', 'tuple', 'range', 'type', 'isinstance', 'super'].includes(name)) continue
-      calls.push({ calleeName: name, line: baseLineNum + i })
+      const base_name = name.split('.')[0]
+      if (!skip.has(base_name) && !skip.has(name)) {
+        calls.push({ calleeName: name, line: base + i })
+      }
     }
     callRe.lastIndex = 0
   }
@@ -167,27 +248,20 @@ function extractCalls(bodyLines: string[], baseLineNum: number): Array<{ calleeN
 
 function extractRoutes(source: string): RouteInfo[] {
   const routes: RouteInfo[] = []
-  // Match @router.get("/path") or @app.post("/path") style decorators
   const routeRe = /@(?:app|router|blueprint)\.(get|post|put|patch|delete|head|options)\s*\(\s*["']([^"']+)["']([^)]*)\)/gi
   const funcRe = /\ndef\s+(\w+)\s*\(/
-
   let m: RegExpExecArray | null
   while ((m = routeRe.exec(source)) !== null) {
     const method = m[1].toUpperCase()
     const routePath = m[2]
     const rest = m[3] || ''
-
-    // Find handler function after this decorator
     const afterDecorator = source.slice(m.index + m[0].length)
     const fnMatch = afterDecorator.match(funcRe)
     const handler = fnMatch?.[1] || 'unknown'
-
-    // Extract tags
     const tagsMatch = rest.match(/tags\s*=\s*\[([^\]]*)\]/)
     const tags = tagsMatch
       ? tagsMatch[1].match(/["']([^"']+)["']/g)?.map(t => t.replace(/["']/g, '')) ?? []
       : []
-
     routes.push({ method, routePath, handler, tags })
   }
   return routes
@@ -195,32 +269,23 @@ function extractRoutes(source: string): RouteInfo[] {
 
 function extractModels(source: string, filePath: string): ModelInfo[] {
   const models: ModelInfo[] = []
-  // Match class definitions that extend ORM base classes
   const classRe = /^class\s+(\w+)\s*\(([^)]*)\)\s*:/gm
-  const fieldRe = /^\s+(\w+)\s*(?::\s*([^\n=]+?))?(?:\s*=\s*.+)?$/gm
   const tableNameRe = /__tablename__\s*=\s*["']([^"']+)["']/
-
   let m: RegExpExecArray | null
   while ((m = classRe.exec(source)) !== null) {
     const className = m[1]
     const bases = m[2]
-
     const isModel = /Base|SQLModel|DeclarativeBase|Model/.test(bases)
     if (!isModel) continue
-
-    // Extract body of this class
     const bodyStart = m.index + m[0].length
-    const nextClassMatch = source.slice(bodyStart).match(/\nclass\s+/)
-    const bodyEnd = nextClassMatch ? bodyStart + nextClassMatch.index! : source.length
+    const nextClass = source.slice(bodyStart).match(/\nclass\s+/)
+    const bodyEnd = nextClass ? bodyStart + nextClass.index! : source.length
     const body = source.slice(bodyStart, bodyEnd)
-
     const tableNameMatch = body.match(tableNameRe)
     const tableName = tableNameMatch ? tableNameMatch[1] : className.toLowerCase() + 's'
-
     const fields: ModelField[] = []
-    const bodyLines = body.split('\n').slice(1)
-    for (const line of bodyLines) {
-      if (line.trim() === '' || line.trim().startsWith('#') || line.trim().startsWith('def ')) continue
+    for (const line of body.split('\n').slice(1)) {
+      if (!line.trim() || line.trim().startsWith('#') || line.trim().startsWith('def ')) continue
       if (line.startsWith('    ') || line.startsWith('\t')) {
         const fm = line.match(/^\s+(\w+)\s*(?::\s*([^\n=]+?))?(?:\s*=.*)?$/)
         if (fm && fm[1] && !fm[1].startsWith('__')) {
@@ -228,10 +293,7 @@ function extractModels(source: string, filePath: string): ModelInfo[] {
         }
       }
     }
-
-    if (fields.length > 0) {
-      models.push({ name: className, tableName, file: filePath, fields })
-    }
+    if (fields.length > 0) models.push({ name: className, tableName, file: filePath, fields })
   }
   return models
 }

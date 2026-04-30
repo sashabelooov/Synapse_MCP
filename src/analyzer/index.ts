@@ -1,6 +1,5 @@
 import fs from 'fs'
 import path from 'path'
-import { globSync } from 'glob'
 import { getDb, upsertProject, clearProjectData } from '../storage/database.js'
 import { parseFile } from './python.js'
 import { getDbPath } from '../config.js'
@@ -67,23 +66,31 @@ export function analyzeProject(projectPath: string): object {
   const dbPath = getDbPath(resolved)
   const db = getDb(dbPath)
 
+  // Migrate: add is_class column if missing
+  try { db.exec('ALTER TABLE functions ADD COLUMN is_class INTEGER DEFAULT 0') } catch {}
+
   const stats = { files: 0, functions: 0, routes: 0, db_models: 0, devops_files: 0 }
 
   const projectId = upsertProject(db, resolved, name, framework)
   clearProjectData(db, projectId)
 
   const pyFiles = collectPythonFiles(resolved)
+
+  // name → id for cross-file call resolution (class names + function names)
   const funcNameToId = new Map<string, number>()
 
-  // First pass: insert files and functions
+  // First pass: insert files + all functions + classes
   const insertFile = db.prepare(
     'INSERT OR REPLACE INTO files (project_id, path, relative_path, file_role) VALUES (?,?,?,?)'
   )
   const insertFn = db.prepare(`
     INSERT INTO functions (file_id, name, qualified_name, line_start, line_end,
-      is_async, decorators, parameters, return_type, docstring)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
+      is_async, is_class, decorators, parameters, return_type, docstring)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
   `)
+
+  // Track class name → id so we can create class→method edges
+  const classNameToId = new Map<string, number>()
 
   for (const pyFile of pyFiles) {
     const fileInfo = parseFile(pyFile, resolved)
@@ -96,22 +103,36 @@ export function analyzeProject(projectPath: string): object {
     for (const fn of fileInfo.functions) {
       const fnResult = insertFn.run(
         fileId, fn.name, fn.qualifiedName, fn.lineStart, fn.lineEnd,
-        fn.isAsync ? 1 : 0, JSON.stringify(fn.decorators),
-        JSON.stringify(fn.parameters), fn.returnType, fn.docstring
+        fn.isAsync ? 1 : 0, fn.isClass ? 1 : 0,
+        JSON.stringify(fn.decorators), JSON.stringify(fn.parameters),
+        fn.returnType, fn.docstring,
       )
       const fnId = fnResult.lastInsertRowid as number
       funcNameToId.set(fn.qualifiedName, fnId)
       funcNameToId.set(fn.name, fnId)
+
+      if (fn.isClass) {
+        classNameToId.set(fn.name, fnId)
+        classNameToId.set(fn.qualifiedName, fnId)
+      }
       stats.functions++
     }
   }
 
-  // Second pass: insert calls with resolved callee IDs
+  // Second pass: insert calls (function bodies + class→method relationships)
   const insertCall = db.prepare(
     'INSERT INTO calls (caller_id, callee_name, callee_id, line_number) VALUES (?,?,?,?)'
   )
   const getFileId = db.prepare('SELECT id FROM files WHERE path=?')
-  const getFnId = db.prepare('SELECT id FROM functions WHERE file_id=? AND name=?')
+  const getFnByQname = db.prepare('SELECT id FROM functions WHERE qualified_name=?')
+  const getFnByName = db.prepare('SELECT id FROM functions WHERE file_id=? AND name=?')
+
+  const insertRoute = db.prepare(
+    'INSERT INTO routes (project_id, method, path, handler_id, tags) VALUES (?,?,?,?,?)'
+  )
+  const insertModel = db.prepare(
+    'INSERT INTO db_models (project_id, name, table_name, file_id, fields) VALUES (?,?,?,?,?)'
+  )
 
   for (const pyFile of pyFiles) {
     const fileInfo = parseFile(pyFile, resolved)
@@ -120,37 +141,57 @@ export function analyzeProject(projectPath: string): object {
     const fileRow = getFileId.get(pyFile) as { id: number } | undefined
     if (!fileRow) continue
 
+    // Group: for each class, find its methods and create class→method edges
+    const classNodes = fileInfo.functions.filter(f => f.isClass)
+    const methodNodes = fileInfo.functions.filter(f => !f.isClass)
+
+    for (const cls of classNodes) {
+      const classId = (getFnByQname.get(cls.qualifiedName) as { id: number } | undefined)?.id
+      if (!classId) continue
+
+      // Find methods that belong to this class (qualified_name starts with module.ClassName.)
+      const prefix = cls.qualifiedName + '.'
+      for (const method of methodNodes) {
+        if (method.qualifiedName.startsWith(prefix)) {
+          const methodId = (getFnByQname.get(method.qualifiedName) as { id: number } | undefined)?.id
+          if (methodId) {
+            insertCall.run(classId, method.name, methodId, method.lineStart)
+          }
+        }
+      }
+    }
+
+    // Insert function call edges
     for (const fn of fileInfo.functions) {
-      const callerRow = getFnId.get(fileRow.id, fn.name) as { id: number } | undefined
+      const callerRow = (getFnByQname.get(fn.qualifiedName) as { id: number } | undefined)
+        ?? (getFnByName.get(fileRow.id, fn.name) as { id: number } | undefined)
       if (!callerRow) continue
 
       for (const call of fn.calls) {
-        const calleeId = funcNameToId.get(call.calleeName) ?? null
+        // Try to resolve: exact name, short name, class name
+        const calleeId = funcNameToId.get(call.calleeName)
+          ?? funcNameToId.get(call.calleeName.split('.').pop()!)
+          ?? classNameToId.get(call.calleeName)
+          ?? null
         insertCall.run(callerRow.id, call.calleeName, calleeId, call.line)
       }
     }
 
-    // Insert routes
-    const insertRoute = db.prepare(
-      'INSERT INTO routes (project_id, method, path, handler_id, tags) VALUES (?,?,?,?,?)'
-    )
+    // Routes
     for (const route of fileInfo.routes) {
       const handlerId = funcNameToId.get(route.handler) ?? null
       insertRoute.run(projectId, route.method, route.routePath, handlerId, JSON.stringify(route.tags))
       stats.routes++
     }
 
-    // Insert DB models
-    const insertModel = db.prepare(
-      'INSERT INTO db_models (project_id, name, table_name, file_id, fields) VALUES (?,?,?,?,?)'
-    )
+    // DB models
     for (const model of fileInfo.models) {
       insertModel.run(projectId, model.name, model.tableName, fileRow.id, JSON.stringify(model.fields))
       stats.db_models++
     }
   }
 
-  // DevOps analysis
+  // DevOps
   const devopsFiles = detectDevopsFiles(resolved)
   if (devopsFiles.length > 0) {
     stats.devops_files = devopsFiles.length

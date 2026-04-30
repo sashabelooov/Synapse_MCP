@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS functions (
   line_start     INTEGER,
   line_end       INTEGER,
   is_async       INTEGER DEFAULT 0,
+  is_class       INTEGER DEFAULT 0,
   decorators     TEXT DEFAULT '[]',
   parameters     TEXT DEFAULT '[]',
   return_type    TEXT,
