@@ -51,42 +51,38 @@ function inferEdges(models: Model[]): Edge[] {
   return edges
 }
 
-// ── Smart layout: models with most relationships go in the center ─────────────
-function layoutModels(models: Model[], relEdges: Edge[]) {
-  const W = 240   // node width
-  const H_BASE = 80
-  const ROW_H = 22
-  const PAD_X = 60
-  const PAD_Y = 60
+// ── Bin-pack layout: track actual height per column ───────────────────────────
+function layoutModels(models: Model[], _relEdges: Edge[]) {
+  const W = 240
+  const HEADER_H = 44   // header row height
+  const FIELD_H = 28    // each field row
+  const GAP_X = 90      // horizontal gap between columns
+  const GAP_Y = 50      // vertical gap between tables in a column
 
-  // Count connections per model
-  const connCount = new Map<number, number>()
-  for (const m of models) connCount.set(m.id, 0)
-  for (const e of relEdges) {
-    const srcId = parseInt((e.source as string).replace('model-', ''))
-    const tgtId = parseInt((e.target as string).replace('model-', ''))
-    connCount.set(srcId, (connCount.get(srcId) ?? 0) + 1)
-    connCount.set(tgtId, (connCount.get(tgtId) ?? 0) + 1)
-  }
+  const nodeHeight = (m: Model) =>
+    HEADER_H + Math.min(m.fields.length, 15) * FIELD_H + (m.fields.length > 15 ? 28 : 0)
 
-  // Sort by connections descending so highly-connected models get central columns
-  const sorted = [...models].sort((a, b) => (connCount.get(b.id) ?? 0) - (connCount.get(a.id) ?? 0))
+  // 4 columns max, fewer for small sets
+  const COLS = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(models.length))))
+  const colBottomY = new Array(COLS).fill(0)
 
-  const COLS = Math.ceil(Math.sqrt(sorted.length * 1.3))
-  const nodes = sorted.map((m, i) => {
-    const col = i % COLS
-    const row = Math.floor(i / COLS)
-    const nodeH = H_BASE + m.fields.slice(0, 15).length * ROW_H
+  // Sort largest tables first so columns stay balanced
+  const sorted = [...models].sort((a, b) => b.fields.length - a.fields.length)
+
+  return sorted.map(m => {
+    // Place in the shortest column
+    const col = colBottomY.indexOf(Math.min(...colBottomY))
+    const x = col * (W + GAP_X)
+    const y = colBottomY[col]
+    colBottomY[col] += nodeHeight(m) + GAP_Y
     return {
       id: `model-${m.id}`,
       type: 'dbModel',
-      position: { x: col * (W + PAD_X), y: row * (nodeH + PAD_Y) },
+      position: { x, y },
       data: { name: m.name, table_name: m.table_name, fields: m.fields },
       style: { width: W },
     }
   })
-
-  return nodes
 }
 
 // ── DB Model node ─────────────────────────────────────────────────────────────
