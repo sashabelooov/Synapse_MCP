@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "synapse-mcp": {
-      "command": "uv",
-      "args": ["run", "python", "-m", "mcp_server.server"],
+      "command": "node",
+      "args": ["--experimental-sqlite", "--import", "tsx/esm", "src/mcp.ts"],
       "cwd": "${workspaceFolder}"
     }
   }
