@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import axios from 'axios'
-import { Loader2, Play, Square, RotateCcw, Clock, AlertTriangle } from 'lucide-react'
+import { Loader2, Play, Pause, RotateCcw, AlertTriangle, SkipBack, SkipForward, ChevronLeft, ChevronRight } from 'lucide-react'
 import Prism from 'prismjs'
 import 'prismjs/components/prism-python'
 
@@ -19,7 +19,6 @@ const PRISM_CSS = `
 .sy-prism .token.boolean        { color: #569cd6; }
 .sy-prism .token.decorator      { color: #c586c0; }
 .sy-prism .token.decorator .token.function { color: #c586c0; }
-.sy-prism .token.triple-quoted-string { color: #ce9178; }
 `
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -28,8 +27,35 @@ interface TraceEvent {
   line: number
   name: string
   elapsed_ms: number
+  locals?: Record<string, string>
   error?: string
   traceback?: string
+}
+
+interface FrameState {
+  name: string
+  locals: Record<string, string>
+}
+
+// Build call-stack snapshot at every step
+function buildStacks(events: TraceEvent[]): FrameState[][] {
+  const result: FrameState[][] = []
+  const stack: FrameState[] = []
+
+  for (const ev of events) {
+    if (ev.event === 'call') {
+      stack.push({ name: ev.name, locals: { ...ev.locals } })
+    } else if (ev.event === 'line' && stack.length > 0) {
+      stack[stack.length - 1].locals = { ...ev.locals }
+    } else if (ev.event === 'return' && stack.length > 0) {
+      stack[stack.length - 1].locals = { ...ev.locals }
+      result.push(stack.map(f => ({ ...f, locals: { ...f.locals } })))
+      stack.pop()
+      continue
+    }
+    result.push(stack.map(f => ({ ...f, locals: { ...f.locals } })))
+  }
+  return result
 }
 
 // ── Default starter code ──────────────────────────────────────────────────────
@@ -78,7 +104,6 @@ function CodeEditor({
 
   const lines = code.split('\n')
 
-  // Inject Prism CSS once
   useEffect(() => {
     if (!document.getElementById('sy-prism-css')) {
       const s = document.createElement('style')
@@ -108,17 +133,13 @@ function CodeEditor({
   }
 
   return (
-    <div style={{
-      flex: 1, display: 'flex', overflow: 'hidden',
-      fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: `${LINE_H}px`,
-    }}>
+    <div style={{ flex: 1, display: 'flex', overflow: 'hidden', fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: `${LINE_H}px` }}>
       {/* Line numbers */}
       <div style={{
         width: 48, flexShrink: 0, paddingTop: 12,
         background: 'var(--bg)', borderRight: '1px solid var(--border)',
         overflowY: 'hidden', userSelect: 'none',
-        display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-        paddingRight: 10,
+        display: 'flex', flexDirection: 'column', alignItems: 'flex-end', paddingRight: 10,
       }}>
         {lines.map((_, i) => {
           const lineNo = i + 1
@@ -139,7 +160,6 @@ function CodeEditor({
 
       {/* Editor area — 3 layers */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-
         {/* Layer 1: yellow line highlights */}
         <div ref={lineHighlightRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', paddingTop: 12 }}>
           {lines.map((_, i) => {
@@ -166,7 +186,7 @@ function CodeEditor({
           dangerouslySetInnerHTML={{ __html: highlighted + '\n' }}
         />
 
-        {/* Layer 3: transparent textarea (captures input, shows caret) */}
+        {/* Layer 3: transparent textarea */}
         <textarea
           ref={textareaRef}
           value={code}
@@ -175,12 +195,9 @@ function CodeEditor({
           disabled={disabled}
           spellCheck={false}
           style={{
-            ...shared,
-            overflow: 'auto',
-            background: 'transparent',
-            border: 'none', outline: 'none', resize: 'none',
-            color: 'transparent',
-            caretColor: '#facc15',
+            ...shared, overflow: 'auto',
+            background: 'transparent', border: 'none', outline: 'none', resize: 'none',
+            color: 'transparent', caretColor: '#facc15',
             opacity: disabled ? 0.7 : 1,
           }}
         />
@@ -189,50 +206,75 @@ function CodeEditor({
   )
 }
 
-// ── Trace step list ───────────────────────────────────────────────────────────
-function TracePanel({ events, currentStep }: { events: TraceEvent[]; currentStep: number }) {
-  const listRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (listRef.current) {
-      const active = listRef.current.querySelector('[data-active="true"]')
-      active?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    }
-  }, [currentStep])
-
-  const visibleEvents = events.slice(0, currentStep + 1)
+// ── Frames & Variables panel ──────────────────────────────────────────────────
+function FramesPanel({ frames }: { frames: FrameState[] }) {
+  if (frames.length === 0) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-faint)', fontSize: 12 }}>
+        No frames yet
+      </div>
+    )
+  }
 
   return (
-    <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-      {visibleEvents.map((e, i) => {
-        const isActive = i === currentStep
-        const isError = e.event === 'error'
-        const color = isError ? '#ef4444' : e.event === 'return' ? '#10b981' : e.event === 'call' ? '#818cf8' : '#64748b'
+    <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {[...frames].reverse().map((frame, i) => {
+        const isTop = i === 0
+        const entries = Object.entries(frame.locals)
         return (
-          <div
-            key={i}
-            data-active={isActive}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '4px 14px',
-              background: isActive ? 'rgba(250,204,21,0.1)' : 'transparent',
-              borderLeft: isActive ? '3px solid #facc15' : '3px solid transparent',
-              transition: 'background 0.1s',
-            }}
-          >
-            <span style={{ fontSize: 9, fontWeight: 700, color, width: 42, flexShrink: 0, letterSpacing: '0.04em' }}>
-              {e.event.toUpperCase()}
-            </span>
-            <span style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--text)', fontWeight: isActive ? 600 : 400 }}>
-              {e.name}
-            </span>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto', flexShrink: 0 }}>
-              L{e.line}
-            </span>
-            {e.elapsed_ms > 0 && (
-              <span style={{ fontSize: 9, color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-                <Clock size={8} />{e.elapsed_ms}ms
+          <div key={i} style={{
+            border: `1px solid ${isTop ? '#facc1540' : 'var(--border)'}`,
+            borderRadius: 8,
+            background: isTop ? 'rgba(250,204,21,0.04)' : 'var(--bg-card)',
+            overflow: 'hidden',
+          }}>
+            {/* Frame header */}
+            <div style={{
+              padding: '5px 10px',
+              background: isTop ? 'rgba(250,204,21,0.1)' : 'var(--bg-panel)',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{
+                fontSize: 10, fontWeight: 700,
+                color: isTop ? '#facc15' : 'var(--text-muted)',
+                fontFamily: FONT, letterSpacing: '0.03em',
+              }}>
+                {frame.name === '<module>' ? 'Global frame' : `${frame.name}()`}
               </span>
+              {isTop && (
+                <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#facc1520', color: '#facc15', marginLeft: 'auto' }}>
+                  active
+                </span>
+              )}
+            </div>
+
+            {/* Variables */}
+            {entries.length === 0 ? (
+              <div style={{ padding: '6px 10px', fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>empty</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <tbody>
+                  {entries.map(([k, v]) => (
+                    <tr key={k} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{
+                        padding: '4px 10px', fontSize: 11,
+                        fontFamily: FONT, color: '#9cdcfe',
+                        width: '35%', verticalAlign: 'top',
+                      }}>
+                        {k}
+                      </td>
+                      <td style={{
+                        padding: '4px 10px', fontSize: 11,
+                        fontFamily: FONT, color: '#ce9178',
+                        wordBreak: 'break-all',
+                      }}>
+                        {v}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         )
@@ -245,26 +287,22 @@ function TracePanel({ events, currentStep }: { events: TraceEvent[]; currentStep
 export default function ExecutionDebugger() {
   const [code, setCode] = useState(DEFAULT_CODE)
   const [events, setEvents] = useState<TraceEvent[]>([])
+  const [stacks, setStacks] = useState<FrameState[][]>([])
   const [running, setRunning] = useState(false)
   const [animating, setAnimating] = useState(false)
   const [currentStep, setCurrentStep] = useState(-1)
-  const [speedIdx, setSpeedIdx] = useState(1)
+  const [speedIdx, setSpeedIdx] = useState(2)   // default 1×
   const [error, setError] = useState('')
-  const [stderr, setStderr] = useState('')
   const [stdout, setStdout] = useState('')
+  const [stderr, setStderr] = useState('')
   const animRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Derived: which lines are active (current step) and which have been visited
+  // Derived highlights
   const activeLines = new Set<number>()
   const executedSet = new Set<number>()
-  const highlightedLines = new Map<number, number>()
-
   for (let i = 0; i <= currentStep && i < events.length; i++) {
     const e = events[i]
-    if (e.line > 0) {
-      executedSet.add(e.line)
-      highlightedLines.set(e.line, i)
-    }
+    if (e.line > 0) executedSet.add(e.line)
   }
   if (currentStep >= 0 && currentStep < events.length && events[currentStep].line > 0) {
     activeLines.add(events[currentStep].line)
@@ -275,10 +313,9 @@ export default function ExecutionDebugger() {
     setAnimating(false)
   }, [])
 
-  const startAnimation = useCallback((evts: TraceEvent[]) => {
+  const startAnimation = useCallback((evts: TraceEvent[], fromStep = 0) => {
     setAnimating(true)
-    setCurrentStep(-1)
-    let step = 0
+    let step = fromStep
     const speed = SPEEDS[speedIdx].ms
 
     function tick() {
@@ -290,7 +327,7 @@ export default function ExecutionDebugger() {
         setAnimating(false)
       }
     }
-    animRef.current = setTimeout(tick, 100)
+    animRef.current = setTimeout(tick, 80)
   }, [speedIdx])
 
   useEffect(() => () => { if (animRef.current) clearTimeout(animRef.current) }, [])
@@ -299,19 +336,21 @@ export default function ExecutionDebugger() {
     stopAnimation()
     setRunning(true)
     setError('')
-    setStderr('')
     setStdout('')
+    setStderr('')
     setEvents([])
+    setStacks([])
     setCurrentStep(-1)
 
     try {
       const { data } = await axios.post('/api/run-code', { code })
       if (!data.ok) { setError(data.error || 'Execution failed'); return }
-      setEvents(data.events || [])
+      const evts: TraceEvent[] = data.events || []
+      setEvents(evts)
+      setStacks(buildStacks(evts))
       setStdout(data.stdout || '')
       setStderr(data.stderr || '')
-      // Start animation after brief pause
-      setTimeout(() => startAnimation(data.events || []), 200)
+      setTimeout(() => startAnimation(evts, 0), 150)
     } catch (e: any) {
       setError(e.response?.data?.error || e.message)
     } finally {
@@ -322,15 +361,22 @@ export default function ExecutionDebugger() {
   function reset() {
     stopAnimation()
     setEvents([])
+    setStacks([])
     setCurrentStep(-1)
     setError('')
-    setStderr('')
     setStdout('')
+    setStderr('')
   }
 
-  const totalLines = events.filter(e => e.event === 'line').length
+  function stepTo(s: number) {
+    stopAnimation()
+    setCurrentStep(Math.max(-1, Math.min(s, events.length - 1)))
+  }
+
+  const totalSteps = events.length
+  const isFinished = !animating && totalSteps > 0 && currentStep >= totalSteps - 1
   const errorEvent = events.find(e => e.event === 'error')
-  const isFinished = !animating && events.length > 0 && currentStep >= events.length - 1
+  const currentFrames = currentStep >= 0 && currentStep < stacks.length ? stacks[currentStep] : []
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)', overflow: 'hidden' }}>
@@ -339,17 +385,12 @@ export default function ExecutionDebugger() {
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10,
         padding: '0 14px', height: 44, flexShrink: 0,
-        borderBottom: '1px solid var(--border)',
-        background: 'var(--bg-panel)',
+        borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)',
       }}>
-        {/* Left: label */}
-        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
-          PYTHON
-        </span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em' }}>PYTHON</span>
+        <div style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 2px' }} />
 
-        <div style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 4px' }} />
-
-        {/* Speed buttons */}
+        {/* Speed */}
         <div style={{ display: 'flex', gap: 3 }}>
           {SPEEDS.map((s, i) => (
             <button key={i} onClick={() => setSpeedIdx(i)} style={{
@@ -358,66 +399,59 @@ export default function ExecutionDebugger() {
               background: speedIdx === i ? 'var(--accent)' : 'var(--bg-input)',
               color: speedIdx === i ? '#fff' : 'var(--text-muted)',
               fontWeight: speedIdx === i ? 600 : 400,
-              transition: 'background 0.1s',
             }}>{s.label}</button>
           ))}
         </div>
 
         <div style={{ flex: 1 }} />
 
-        {/* Status badge while animating/done */}
-        {events.length > 0 && (
-          <span style={{
-            fontSize: 11, padding: '2px 10px', borderRadius: 99,
-            background: animating ? 'rgba(250,204,21,0.12)' : isFinished ? 'rgba(34,197,94,0.12)' : 'var(--bg-input)',
-            color: animating ? '#facc15' : isFinished ? '#22c55e' : 'var(--text-muted)',
-            border: `1px solid ${animating ? '#facc1530' : isFinished ? '#22c55e30' : 'var(--border)'}`,
-          }}>
-            {animating ? `step ${currentStep + 1} / ${events.length}` : isFinished ? `✓ ${totalLines} lines executed` : ''}
+        {/* Step counter */}
+        {totalSteps > 0 && (
+          <span style={{ fontSize: 11, color: isFinished ? '#22c55e' : 'var(--text-muted)' }}>
+            {currentStep < 0 ? '–' : `Step ${currentStep + 1}`} / {totalSteps}
           </span>
         )}
 
         {/* Reset */}
-        {events.length > 0 && (
+        {totalSteps > 0 && (
           <button onClick={reset} title="Clear" style={{
             padding: '5px 8px', borderRadius: 6,
             border: '1px solid var(--border)', background: 'var(--bg-input)',
-            color: 'var(--text-muted)', cursor: 'pointer',
-            display: 'flex', alignItems: 'center',
+            color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center',
           }}>
             <RotateCcw size={13} />
           </button>
         )}
 
-        {/* Run / Stop */}
+        {/* Run / Pause */}
         {animating ? (
           <button onClick={stopAnimation} style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '6px 16px', borderRadius: 7, border: 'none',
-            background: '#ef4444', color: '#fff',
-            fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            background: '#f59e0b', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
           }}>
-            <Square size={11} fill="#fff" /> Stop
+            <Pause size={12} fill="#fff" /> Pause
           </button>
         ) : (
-          <button onClick={runCode} disabled={running || !code.trim()} style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '6px 16px', borderRadius: 7, border: 'none',
-            background: running ? 'var(--bg-input)' : '#22c55e',
-            color: running ? 'var(--text-muted)' : '#fff',
-            fontSize: 12, fontWeight: 600,
-            cursor: (running || !code.trim()) ? 'not-allowed' : 'pointer',
-            opacity: (running || !code.trim()) ? 0.6 : 1,
-          }}>
+          <button onClick={totalSteps > 0 && !isFinished ? () => startAnimation(events, currentStep < 0 ? 0 : currentStep) : runCode}
+            disabled={running || (!totalSteps && !code.trim())}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 16px', borderRadius: 7, border: 'none',
+              background: running ? 'var(--bg-input)' : '#22c55e',
+              color: running ? 'var(--text-muted)' : '#fff',
+              fontSize: 12, fontWeight: 600, cursor: running ? 'not-allowed' : 'pointer',
+              opacity: running ? 0.6 : 1,
+            }}>
             {running
               ? <><Loader2 size={12} className="animate-spin" /> Running…</>
-              : <><Play size={12} fill="#fff" /> Run Trace</>
+              : <><Play size={12} fill="#fff" /> {totalSteps > 0 && !isFinished ? 'Resume' : 'Run Trace'}</>
             }
           </button>
         )}
       </div>
 
-      {/* ── Body: editor + trace side by side ── */}
+      {/* ── Body ── */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
         {/* Left: Code editor */}
@@ -430,21 +464,14 @@ export default function ExecutionDebugger() {
             disabled={running || animating}
           />
 
-          {/* Error bar */}
           {(error || errorEvent) && (
-            <div style={{
-              padding: '8px 14px', flexShrink: 0,
-              borderTop: '1px solid #ef444440', background: '#ef444410',
-              display: 'flex', alignItems: 'flex-start', gap: 7,
-            }}>
+            <div style={{ padding: '8px 14px', flexShrink: 0, borderTop: '1px solid #ef444440', background: '#ef444410', display: 'flex', alignItems: 'flex-start', gap: 7 }}>
               <AlertTriangle size={13} style={{ color: '#ef4444', flexShrink: 0, marginTop: 1 }} />
               <pre style={{ fontSize: 11, color: '#ef4444', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
                 {error || errorEvent?.error}
               </pre>
             </div>
           )}
-
-          {/* Output bar */}
           {stdout && (
             <div style={{ padding: '6px 14px', flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-panel)' }}>
               <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 2, letterSpacing: '0.05em' }}>OUTPUT</div>
@@ -458,59 +485,89 @@ export default function ExecutionDebugger() {
           )}
         </div>
 
-        {/* Right: Trace panel */}
+        {/* Right: Frames + navigation */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Trace header */}
+
+          {/* Header */}
           <div style={{
             padding: '0 14px', height: 36, flexShrink: 0,
             borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)',
-            display: 'flex', alignItems: 'center', gap: 12,
+            display: 'flex', alignItems: 'center', gap: 10,
           }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-              EXECUTION TRACE
-            </span>
-            {events.length > 0 && (
-              <div style={{ display: 'flex', gap: 12, marginLeft: 'auto' }}>
-                {[
-                  { color: '#818cf8', label: 'call' },
-                  { color: '#94a3b8', label: 'line' },
-                  { color: '#10b981', label: 'return' },
-                  { color: '#ef4444', label: 'error' },
-                ].map(({ color, label }) => (
-                  <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-faint)' }}>
-                    <span style={{ width: 7, height: 7, borderRadius: 2, background: color }} />
-                    {label}
-                  </span>
-                ))}
-              </div>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>FRAMES</span>
+            {currentFrames.length > 0 && (
+              <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                {currentFrames.length} frame{currentFrames.length > 1 ? 's' : ''}
+              </span>
             )}
           </div>
 
-          {events.length === 0 ? (
-            <div style={{
-              flex: 1, display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center',
-              gap: 12, color: 'var(--text-muted)',
-            }}>
-              <div style={{
-                width: 48, height: 48, borderRadius: '50%',
-                background: 'var(--bg-card)', border: '1px solid var(--border)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
+          {/* Frames panel */}
+          {totalSteps === 0 ? (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--text-muted)' }}>
+              <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'var(--bg-card)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Play size={18} style={{ color: 'var(--text-faint)' }} />
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Write code and click Run Trace</div>
-                <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Each executed line will be highlighted in yellow</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Variables and call frames appear here</div>
               </div>
             </div>
           ) : (
-            <TracePanel events={events} currentStep={currentStep} />
+            <FramesPanel frames={currentFrames} />
+          )}
+
+          {/* Step navigation */}
+          {totalSteps > 0 && (
+            <div style={{
+              flexShrink: 0, padding: '10px 14px',
+              borderTop: '1px solid var(--border)', background: 'var(--bg-panel)',
+              display: 'flex', flexDirection: 'column', gap: 8,
+            }}>
+              {/* Slider */}
+              <input
+                type="range"
+                min={0}
+                max={totalSteps - 1}
+                value={Math.max(0, currentStep)}
+                onChange={e => stepTo(parseInt(e.target.value))}
+                style={{ width: '100%', accentColor: '#facc15', cursor: 'pointer' }}
+              />
+
+              {/* Step buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <button onClick={() => stepTo(0)} disabled={currentStep <= 0} title="First" style={navBtn(currentStep <= 0)}>
+                  <SkipBack size={13} />
+                </button>
+                <button onClick={() => stepTo(currentStep - 1)} disabled={currentStep <= 0} title="Previous" style={navBtn(currentStep <= 0)}>
+                  <ChevronLeft size={13} />
+                </button>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 80, textAlign: 'center' }}>
+                  {currentStep < 0 ? '–' : `${currentStep + 1} / ${totalSteps}`}
+                </span>
+                <button onClick={() => stepTo(currentStep + 1)} disabled={currentStep >= totalSteps - 1} title="Next" style={navBtn(currentStep >= totalSteps - 1)}>
+                  <ChevronRight size={13} />
+                </button>
+                <button onClick={() => stepTo(totalSteps - 1)} disabled={currentStep >= totalSteps - 1} title="Last" style={navBtn(currentStep >= totalSteps - 1)}>
+                  <SkipForward size={13} />
+                </button>
+              </div>
+            </div>
           )}
         </div>
-        {/* end right panel */}
       </div>
-      {/* end body */}
     </div>
   )
+}
+
+function navBtn(disabled: boolean): React.CSSProperties {
+  return {
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: 30, height: 30, borderRadius: 6,
+    border: '1px solid var(--border)',
+    background: disabled ? 'transparent' : 'var(--bg-input)',
+    color: disabled ? 'var(--text-faint)' : 'var(--text-muted)',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.4 : 1,
+  }
 }

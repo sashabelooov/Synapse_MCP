@@ -180,12 +180,26 @@ _start = time.perf_counter()
 _user_src = "<user_code>"
 _buf = io.StringIO()
 
+def _capture_locals(frame):
+    locs = {}
+    try:
+        for k, v in frame.f_locals.items():
+            if k.startswith('_'): continue
+            try:
+                r = repr(v)
+                locs[k] = r if len(r) <= 200 else r[:200] + '…'
+            except:
+                locs[k] = '<?>'
+    except: pass
+    return locs
+
 def _tracer(frame, event, arg):
     if frame.f_code.co_filename == _user_src and event in ("call", "line", "return"):
         _events.append({
             "event": event,
             "line": frame.f_lineno,
             "name": frame.f_code.co_name,
+            "locals": _capture_locals(frame),
             "elapsed_ms": round((time.perf_counter() - _start) * 1000, 2)
         })
     return _tracer
