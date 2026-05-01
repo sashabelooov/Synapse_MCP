@@ -4,7 +4,9 @@
   "description": "Synapse MCP — Code Intelligence Server",
   "type": "module",
   "scripts": {
-    "dev": "node --experimental-sqlite --import tsx/esm src/server.ts",
+    "dev": "concurrently --names \"API,UI\" --prefix-colors \"cyan,magenta\" \"node --experimental-sqlite --import tsx/esm src/server.ts\" \"cd web_ui/frontend && npm run dev\"",
+    "dev:api": "node --experimental-sqlite --import tsx/esm src/server.ts",
+    "dev:ui": "cd web_ui/frontend && npm run dev",
     "start": "node --experimental-sqlite --import tsx/esm src/server.ts",
     "mcp": "node --experimental-sqlite --import tsx/esm src/mcp.ts",
     "build": "tsc",
@@ -21,6 +23,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.0.0",
+    "concurrently": "^9.2.1",
     "tsx": "^4.15.6",
     "typescript": "^5.4.5"
   }
