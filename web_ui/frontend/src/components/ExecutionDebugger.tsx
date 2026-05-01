@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import axios from 'axios'
 import { Loader2, Play, Square, RotateCcw, ChevronRight, Clock, AlertTriangle } from 'lucide-react'
-import { useStore } from '../store/useStore'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TraceEvent {
@@ -200,7 +199,6 @@ function TracePanel({ events, currentStep }: { events: TraceEvent[]; currentStep
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function ExecutionDebugger() {
-  const { projectPath } = useStore()
   const [code, setCode] = useState(DEFAULT_CODE)
   const [events, setEvents] = useState<TraceEvent[]>([])
   const [running, setRunning] = useState(false)
@@ -209,6 +207,7 @@ export default function ExecutionDebugger() {
   const [speedIdx, setSpeedIdx] = useState(1)
   const [error, setError] = useState('')
   const [stderr, setStderr] = useState('')
+  const [stdout, setStdout] = useState('')
   const animRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Derived: which lines are active (current step) and which have been visited
@@ -257,13 +256,15 @@ export default function ExecutionDebugger() {
     setRunning(true)
     setError('')
     setStderr('')
+    setStdout('')
     setEvents([])
     setCurrentStep(-1)
 
     try {
-      const { data } = await axios.post('/api/run-code', { code, path: projectPath })
+      const { data } = await axios.post('/api/run-code', { code })
       if (!data.ok) { setError(data.error || 'Execution failed'); return }
       setEvents(data.events || [])
+      setStdout(data.stdout || '')
       setStderr(data.stderr || '')
       // Start animation after brief pause
       setTimeout(() => startAnimation(data.events || []), 200)
@@ -280,6 +281,7 @@ export default function ExecutionDebugger() {
     setCurrentStep(-1)
     setError('')
     setStderr('')
+    setStdout('')
   }
 
   const totalLines = events.filter(e => e.event === 'line').length
@@ -377,6 +379,16 @@ export default function ExecutionDebugger() {
             <pre style={{ fontSize: 11, color: '#ef4444', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
               {error || errorEvent?.error}
             </pre>
+          </div>
+        )}
+        {stdout && (
+          <div style={{
+            padding: '6px 14px', flexShrink: 0,
+            borderTop: '1px solid var(--border)',
+            background: 'var(--bg-panel)',
+          }}>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 2, letterSpacing: '0.05em' }}>OUTPUT</div>
+            <pre style={{ fontSize: 11, color: '#a3e635', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{stdout}</pre>
           </div>
         )}
         {stderr && !error && !errorEvent && (

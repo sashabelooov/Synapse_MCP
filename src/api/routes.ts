@@ -173,11 +173,12 @@ router.post('/run-code', (req: Request, res: Response) => {
   if (code.length > 50_000) return res.status(400).json({ ok: false, error: 'Code too large (max 50KB)' })
 
   const TRACER = `
-import sys, json, time
+import sys, json, time, io
 
 _events = []
 _start = time.perf_counter()
 _user_src = "<user_code>"
+_buf = io.StringIO()
 
 def _tracer(frame, event, arg):
     if frame.f_code.co_filename == _user_src and event in ("call", "line", "return"):
@@ -192,6 +193,9 @@ def _tracer(frame, event, arg):
 _globals = {"__name__": "__main__"}
 _code_str = sys.stdin.read()
 _compiled = compile(_code_str, _user_src, "exec")
+
+_real_stdout = sys.stdout
+sys.stdout = _buf
 sys.settrace(_tracer)
 try:
     exec(_compiled, _globals)
@@ -201,8 +205,9 @@ except Exception as e:
                     "error": str(e), "traceback": traceback.format_exc(), "elapsed_ms": 0})
 finally:
     sys.settrace(None)
+    sys.stdout = _real_stdout
 
-print(json.dumps(_events))
+_real_stdout.write(json.dumps({"events": _events, "stdout": _buf.getvalue()}) + "\\n")
 `
 
   try {
@@ -222,9 +227,9 @@ print(json.dumps(_events))
       return res.json({ ok: false, error: result.stderr || 'Python execution failed' })
     }
 
-    const events = JSON.parse(result.stdout || '[]')
+    const parsed = JSON.parse(result.stdout || '{"events":[],"stdout":""}')
     const stderr = result.stderr || ''
-    res.json({ ok: true, events, stderr })
+    res.json({ ok: true, events: parsed.events, stdout: parsed.stdout, stderr })
   } catch (e: any) {
     res.json({ ok: false, error: e.message })
   }
