@@ -1,6 +1,26 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import axios from 'axios'
-import { Loader2, Play, Square, RotateCcw, ChevronRight, Clock, AlertTriangle } from 'lucide-react'
+import { Loader2, Play, Square, RotateCcw, Clock, AlertTriangle } from 'lucide-react'
+import Prism from 'prismjs'
+import 'prismjs/components/prism-python'
+
+// VSCode Dark+ Python color theme for Prism
+const PRISM_CSS = `
+.sy-prism { color: #d4d4d4; }
+.sy-prism .token.keyword        { color: #569cd6; }
+.sy-prism .token.builtin        { color: #4ec9b0; }
+.sy-prism .token.string         { color: #ce9178; }
+.sy-prism .token.comment        { color: #6a9955; font-style: italic; }
+.sy-prism .token.number         { color: #b5cea8; }
+.sy-prism .token.function       { color: #dcdcaa; }
+.sy-prism .token.class-name     { color: #4ec9b0; }
+.sy-prism .token.operator       { color: #d4d4d4; }
+.sy-prism .token.punctuation    { color: #d4d4d4; }
+.sy-prism .token.boolean        { color: #569cd6; }
+.sy-prism .token.decorator      { color: #c586c0; }
+.sy-prism .token.decorator .token.function { color: #c586c0; }
+.sy-prism .token.triple-quoted-string { color: #ce9178; }
+`
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TraceEvent {
@@ -37,34 +57,60 @@ const SPEEDS = [
   { label: '4×',   ms: 60  },
 ]
 
+const FONT = "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
+const FONT_SIZE = 13
+const LINE_H = 22
+const PAD = '12px 16px'
+
 // ── Code editor with highlighted lines ───────────────────────────────────────
 function CodeEditor({
-  code, onChange, highlightedLines, activeLines, executedSet, disabled,
+  code, onChange, activeLines, executedSet, disabled,
 }: {
   code: string
   onChange: (c: string) => void
-  highlightedLines: Map<number, number>   // line → step index (for dim yellow)
-  activeLines: Set<number>                // currently animating (bright yellow)
-  executedSet: Set<number>                // all executed so far
+  activeLines: Set<number>
+  executedSet: Set<number>
   disabled: boolean
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const backdropRef = useRef<HTMLDivElement>(null)
+  const lineHighlightRef = useRef<HTMLDivElement>(null)
+  const prismRef = useRef<HTMLPreElement>(null)
 
   const lines = code.split('\n')
 
-  // Sync textarea scroll with backdrop
-  const syncScroll = () => {
-    if (backdropRef.current && textareaRef.current) {
-      backdropRef.current.scrollTop = textareaRef.current.scrollTop
+  // Inject Prism CSS once
+  useEffect(() => {
+    if (!document.getElementById('sy-prism-css')) {
+      const s = document.createElement('style')
+      s.id = 'sy-prism-css'
+      s.textContent = PRISM_CSS
+      document.head.appendChild(s)
     }
+  }, [])
+
+  const highlighted = useMemo(
+    () => Prism.highlight(code, Prism.languages.python, 'python'),
+    [code]
+  )
+
+  const syncScroll = () => {
+    const top = textareaRef.current?.scrollTop ?? 0
+    if (lineHighlightRef.current) lineHighlightRef.current.scrollTop = top
+    if (prismRef.current) prismRef.current.scrollTop = top
+  }
+
+  const shared: React.CSSProperties = {
+    position: 'absolute', inset: 0, margin: 0,
+    padding: PAD,
+    fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: `${LINE_H}px`,
+    whiteSpace: 'pre', overflow: 'hidden',
+    tabSize: 4,
   }
 
   return (
     <div style={{
       flex: 1, display: 'flex', overflow: 'hidden',
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-      fontSize: 13, lineHeight: '22px',
+      fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: `${LINE_H}px`,
     }}>
       {/* Line numbers */}
       <div style={{
@@ -80,7 +126,7 @@ function CodeEditor({
           const wasExecuted = executedSet.has(lineNo)
           return (
             <div key={i} style={{
-              height: 22, lineHeight: '22px', fontSize: 11,
+              height: LINE_H, lineHeight: `${LINE_H}px`, fontSize: 11,
               color: isActive ? '#facc15' : wasExecuted ? '#f59e0b88' : 'var(--text-faint)',
               fontWeight: isActive ? 700 : 400,
               transition: 'color 0.1s',
@@ -91,27 +137,19 @@ function CodeEditor({
         })}
       </div>
 
-      {/* Editor area (textarea + highlight backdrop) */}
+      {/* Editor area — 3 layers */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* Highlight backdrop */}
-        <div
-          ref={backdropRef}
-          style={{
-            position: 'absolute', inset: 0,
-            overflowY: 'hidden', pointerEvents: 'none',
-            paddingTop: 12,
-          }}
-        >
+
+        {/* Layer 1: yellow line highlights */}
+        <div ref={lineHighlightRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', paddingTop: 12 }}>
           {lines.map((_, i) => {
             const lineNo = i + 1
             const isActive = activeLines.has(lineNo)
             const wasExecuted = executedSet.has(lineNo)
             return (
               <div key={i} style={{
-                height: 22,
-                background: isActive
-                  ? 'rgba(250, 204, 21, 0.25)'
-                  : wasExecuted ? 'rgba(250, 204, 21, 0.07)' : 'transparent',
+                height: LINE_H,
+                background: isActive ? 'rgba(250,204,21,0.22)' : wasExecuted ? 'rgba(250,204,21,0.07)' : 'transparent',
                 borderLeft: isActive ? '3px solid #facc15' : wasExecuted ? '3px solid #f59e0b44' : '3px solid transparent',
                 transition: 'background 0.12s, border-color 0.12s',
               }} />
@@ -119,7 +157,16 @@ function CodeEditor({
           })}
         </div>
 
-        {/* Textarea */}
+        {/* Layer 2: Prism syntax colors */}
+        <pre
+          ref={prismRef}
+          className="sy-prism"
+          aria-hidden
+          style={{ ...shared, background: 'transparent', pointerEvents: 'none' }}
+          dangerouslySetInnerHTML={{ __html: highlighted + '\n' }}
+        />
+
+        {/* Layer 3: transparent textarea (captures input, shows caret) */}
         <textarea
           ref={textareaRef}
           value={code}
@@ -128,15 +175,12 @@ function CodeEditor({
           disabled={disabled}
           spellCheck={false}
           style={{
-            position: 'absolute', inset: 0,
-            width: '100%', height: '100%',
+            ...shared,
+            overflow: 'auto',
             background: 'transparent',
             border: 'none', outline: 'none', resize: 'none',
-            color: 'var(--text)',
-            padding: '12px 16px',
-            fontFamily: 'inherit', fontSize: 'inherit', lineHeight: 'inherit',
-            overflowY: 'auto',
-            caretColor: 'var(--accent)',
+            color: 'transparent',
+            caretColor: '#facc15',
             opacity: disabled ? 0.7 : 1,
           }}
         />
@@ -361,7 +405,7 @@ export default function ExecutionDebugger() {
         <CodeEditor
           code={code}
           onChange={c => { setCode(c); reset() }}
-          highlightedLines={highlightedLines}
+
           activeLines={activeLines}
           executedSet={executedSet}
           disabled={running || animating}
