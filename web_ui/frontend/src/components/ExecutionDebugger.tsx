@@ -51,10 +51,10 @@ print("Sum:", total)
 
 // ── Animation speed options ───────────────────────────────────────────────────
 const SPEEDS = [
-  { label: '0.5×', ms: 600 },
-  { label: '1×',   ms: 300 },
-  { label: '2×',   ms: 150 },
-  { label: '4×',   ms: 60  },
+  { label: '0.25×', ms: 1200 },
+  { label: '0.5×',  ms: 600  },
+  { label: '1×',    ms: 300  },
+  { label: '2×',    ms: 150  },
 ]
 
 const FONT = "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
@@ -333,185 +333,184 @@ export default function ExecutionDebugger() {
   const isFinished = !animating && events.length > 0 && currentStep >= events.length - 1
 
   return (
-    <div style={{ display: 'flex', height: '100%', background: 'var(--bg)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)', overflow: 'hidden' }}>
 
-      {/* ── Left: Editor ── */}
+      {/* ── Unified top toolbar ── */}
       <div style={{
-        flex: '0 0 60%', display: 'flex', flexDirection: 'column',
-        borderRight: '1px solid var(--border)',
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '0 14px', height: 44, flexShrink: 0,
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--bg-panel)',
       }}>
-        {/* Editor toolbar */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '8px 12px', borderBottom: '1px solid var(--border)',
-          background: 'var(--bg-panel)', flexShrink: 0,
-        }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-            PYTHON
-          </span>
-          <div style={{ flex: 1 }} />
+        {/* Left: label */}
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
+          PYTHON
+        </span>
 
-          {/* Speed selector */}
-          <div style={{ display: 'flex', gap: 2 }}>
-            {SPEEDS.map((s, i) => (
-              <button key={i} onClick={() => setSpeedIdx(i)} style={{
-                padding: '2px 7px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                border: '1px solid var(--border)',
-                background: speedIdx === i ? 'var(--accent)' : 'var(--bg-input)',
-                color: speedIdx === i ? '#fff' : 'var(--text-muted)',
-              }}>{s.label}</button>
-            ))}
-          </div>
+        <div style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 4px' }} />
 
-          {/* Run / Stop / Reset */}
-          {animating ? (
-            <button onClick={stopAnimation} style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '5px 14px', borderRadius: 7, border: 'none',
-              background: '#ef4444', color: '#fff',
-              fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            }}>
-              <Square size={11} fill="#fff" /> Stop
-            </button>
-          ) : (
-            <button onClick={runCode} disabled={running || !code.trim()} style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '5px 14px', borderRadius: 7, border: 'none',
-              background: running ? 'var(--bg-input)' : '#22c55e',
-              color: running ? 'var(--text-muted)' : '#fff',
-              fontSize: 12, fontWeight: 600, cursor: running ? 'not-allowed' : 'pointer',
-              opacity: running ? 0.7 : 1,
-            }}>
-              {running
-                ? <><Loader2 size={11} className="animate-spin" /> Running…</>
-                : <><Play size={11} fill="#fff" /> Run Trace</>
-              }
-            </button>
-          )}
-
-          {events.length > 0 && (
-            <button onClick={reset} title="Clear" style={{
-              padding: '5px 8px', borderRadius: 7,
-              border: '1px solid var(--border)', background: 'var(--bg-input)',
-              color: 'var(--text-muted)', cursor: 'pointer',
-              display: 'flex', alignItems: 'center',
-            }}>
-              <RotateCcw size={12} />
-            </button>
-          )}
+        {/* Speed buttons */}
+        <div style={{ display: 'flex', gap: 3 }}>
+          {SPEEDS.map((s, i) => (
+            <button key={i} onClick={() => setSpeedIdx(i)} style={{
+              padding: '3px 9px', borderRadius: 5, fontSize: 11, cursor: 'pointer',
+              border: '1px solid var(--border)',
+              background: speedIdx === i ? 'var(--accent)' : 'var(--bg-input)',
+              color: speedIdx === i ? '#fff' : 'var(--text-muted)',
+              fontWeight: speedIdx === i ? 600 : 400,
+              transition: 'background 0.1s',
+            }}>{s.label}</button>
+          ))}
         </div>
 
-        {/* Code editor */}
-        <CodeEditor
-          code={code}
-          onChange={c => { setCode(c); reset() }}
+        <div style={{ flex: 1 }} />
 
-          activeLines={activeLines}
-          executedSet={executedSet}
-          disabled={running || animating}
-        />
+        {/* Status badge while animating/done */}
+        {events.length > 0 && (
+          <span style={{
+            fontSize: 11, padding: '2px 10px', borderRadius: 99,
+            background: animating ? 'rgba(250,204,21,0.12)' : isFinished ? 'rgba(34,197,94,0.12)' : 'var(--bg-input)',
+            color: animating ? '#facc15' : isFinished ? '#22c55e' : 'var(--text-muted)',
+            border: `1px solid ${animating ? '#facc1530' : isFinished ? '#22c55e30' : 'var(--border)'}`,
+          }}>
+            {animating ? `step ${currentStep + 1} / ${events.length}` : isFinished ? `✓ ${totalLines} lines executed` : ''}
+          </span>
+        )}
 
-        {/* Error / stderr bar */}
-        {(error || errorEvent) && (
-          <div style={{
-            padding: '8px 14px', flexShrink: 0,
-            borderTop: '1px solid #ef444440',
-            background: '#ef444410',
-            display: 'flex', alignItems: 'flex-start', gap: 7,
+        {/* Reset */}
+        {events.length > 0 && (
+          <button onClick={reset} title="Clear" style={{
+            padding: '5px 8px', borderRadius: 6,
+            border: '1px solid var(--border)', background: 'var(--bg-input)',
+            color: 'var(--text-muted)', cursor: 'pointer',
+            display: 'flex', alignItems: 'center',
           }}>
-            <AlertTriangle size={13} style={{ color: '#ef4444', flexShrink: 0, marginTop: 1 }} />
-            <pre style={{ fontSize: 11, color: '#ef4444', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
-              {error || errorEvent?.error}
-            </pre>
-          </div>
+            <RotateCcw size={13} />
+          </button>
         )}
-        {stdout && (
-          <div style={{
-            padding: '6px 14px', flexShrink: 0,
-            borderTop: '1px solid var(--border)',
-            background: 'var(--bg-panel)',
+
+        {/* Run / Stop */}
+        {animating ? (
+          <button onClick={stopAnimation} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 16px', borderRadius: 7, border: 'none',
+            background: '#ef4444', color: '#fff',
+            fontSize: 12, fontWeight: 600, cursor: 'pointer',
           }}>
-            <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 2, letterSpacing: '0.05em' }}>OUTPUT</div>
-            <pre style={{ fontSize: 11, color: '#a3e635', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{stdout}</pre>
-          </div>
-        )}
-        {stderr && !error && !errorEvent && (
-          <div style={{
-            padding: '6px 14px', flexShrink: 0,
-            borderTop: '1px solid var(--border)',
-            background: 'var(--bg-panel)',
+            <Square size={11} fill="#fff" /> Stop
+          </button>
+        ) : (
+          <button onClick={runCode} disabled={running || !code.trim()} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 16px', borderRadius: 7, border: 'none',
+            background: running ? 'var(--bg-input)' : '#22c55e',
+            color: running ? 'var(--text-muted)' : '#fff',
+            fontSize: 12, fontWeight: 600,
+            cursor: (running || !code.trim()) ? 'not-allowed' : 'pointer',
+            opacity: (running || !code.trim()) ? 0.6 : 1,
           }}>
-            <pre style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, whiteSpace: 'pre-wrap' }}>{stderr}</pre>
-          </div>
+            {running
+              ? <><Loader2 size={12} className="animate-spin" /> Running…</>
+              : <><Play size={12} fill="#fff" /> Run Trace</>
+            }
+          </button>
         )}
       </div>
 
-      {/* ── Right: Trace panel ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* Panel header */}
-        <div style={{
-          padding: '8px 14px', borderBottom: '1px solid var(--border)',
-          background: 'var(--bg-panel)', flexShrink: 0,
-          display: 'flex', alignItems: 'center', gap: 8,
-        }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-            EXECUTION TRACE
-          </span>
-          {events.length > 0 && (
-            <span style={{
-              fontSize: 10, padding: '1px 7px', borderRadius: 99,
-              background: animating ? 'rgba(250,204,21,0.15)' : isFinished ? 'rgba(34,197,94,0.15)' : 'var(--bg-input)',
-              color: animating ? '#facc15' : isFinished ? '#22c55e' : 'var(--text-muted)',
-              border: `1px solid ${animating ? '#facc1540' : isFinished ? '#22c55e40' : 'var(--border)'}`,
+      {/* ── Body: editor + trace side by side ── */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
+        {/* Left: Code editor */}
+        <div style={{ flex: '0 0 60%', display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)' }}>
+          <CodeEditor
+            code={code}
+            onChange={c => { setCode(c); reset() }}
+            activeLines={activeLines}
+            executedSet={executedSet}
+            disabled={running || animating}
+          />
+
+          {/* Error bar */}
+          {(error || errorEvent) && (
+            <div style={{
+              padding: '8px 14px', flexShrink: 0,
+              borderTop: '1px solid #ef444440', background: '#ef444410',
+              display: 'flex', alignItems: 'flex-start', gap: 7,
             }}>
-              {animating ? `step ${currentStep + 1} / ${events.length}` : isFinished ? `✓ ${totalLines} lines executed` : ''}
-            </span>
+              <AlertTriangle size={13} style={{ color: '#ef4444', flexShrink: 0, marginTop: 1 }} />
+              <pre style={{ fontSize: 11, color: '#ef4444', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+                {error || errorEvent?.error}
+              </pre>
+            </div>
+          )}
+
+          {/* Output bar */}
+          {stdout && (
+            <div style={{ padding: '6px 14px', flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-panel)' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 2, letterSpacing: '0.05em' }}>OUTPUT</div>
+              <pre style={{ fontSize: 11, color: '#a3e635', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{stdout}</pre>
+            </div>
+          )}
+          {stderr && !error && !errorEvent && (
+            <div style={{ padding: '6px 14px', flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-panel)' }}>
+              <pre style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, whiteSpace: 'pre-wrap' }}>{stderr}</pre>
+            </div>
           )}
         </div>
 
-        {events.length === 0 ? (
+        {/* Right: Trace panel */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Trace header */}
           <div style={{
-            flex: 1, display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center',
-            gap: 12, color: 'var(--text-muted)',
+            padding: '0 14px', height: 36, flexShrink: 0,
+            borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)',
+            display: 'flex', alignItems: 'center', gap: 12,
           }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+              EXECUTION TRACE
+            </span>
+            {events.length > 0 && (
+              <div style={{ display: 'flex', gap: 12, marginLeft: 'auto' }}>
+                {[
+                  { color: '#818cf8', label: 'call' },
+                  { color: '#94a3b8', label: 'line' },
+                  { color: '#10b981', label: 'return' },
+                  { color: '#ef4444', label: 'error' },
+                ].map(({ color, label }) => (
+                  <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-faint)' }}>
+                    <span style={{ width: 7, height: 7, borderRadius: 2, background: color }} />
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {events.length === 0 ? (
             <div style={{
-              width: 52, height: 52, borderRadius: '50%',
-              background: 'var(--bg-card)', border: '1px solid var(--border)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flex: 1, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center',
+              gap: 12, color: 'var(--text-muted)',
             }}>
-              <Play size={20} style={{ color: 'var(--text-faint)' }} />
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Write code and click Run Trace</div>
-              <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                Each executed line will be highlighted in yellow
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%',
+                background: 'var(--bg-card)', border: '1px solid var(--border)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Play size={18} style={{ color: 'var(--text-faint)' }} />
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Write code and click Run Trace</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Each executed line will be highlighted in yellow</div>
               </div>
             </div>
-          </div>
-        ) : (
-          <>
-            {/* Legend */}
-            <div style={{
-              padding: '6px 14px', borderBottom: '1px solid var(--border)',
-              display: 'flex', gap: 14, flexShrink: 0,
-            }}>
-              {[
-                { color: '#818cf8', label: 'call' },
-                { color: '#64748b', label: 'line' },
-                { color: '#10b981', label: 'return' },
-                { color: '#ef4444', label: 'error' },
-              ].map(({ color, label }) => (
-                <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--text-muted)' }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
-                  {label}
-                </span>
-              ))}
-            </div>
+          ) : (
             <TracePanel events={events} currentStep={currentStep} />
-          </>
-        )}
+          )}
+        </div>
+        {/* end right panel */}
       </div>
+      {/* end body */}
     </div>
   )
 }
