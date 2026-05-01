@@ -1,193 +1,461 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import axios from 'axios'
-import { Loader2, Play, ChevronRight, ChevronDown, Clock, ArrowRight } from 'lucide-react'
+import { Loader2, Play, Square, RotateCcw, ChevronRight, Clock, AlertTriangle } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { TraceEvent, TraceSummary } from '../types'
 
-const EVENT_COLOR = { call: '#6366f1', return: '#10b981', error: '#ef4444' }
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface TraceEvent {
+  event: 'call' | 'line' | 'return' | 'error'
+  line: number
+  name: string
+  elapsed_ms: number
+  error?: string
+  traceback?: string
+}
 
-function TraceRow({ event, index }: { event: TraceEvent; index: number }) {
-  const [open, setOpen] = useState(false)
-  const isCall = event.event === 'call'
-  const color = EVENT_COLOR[event.event] || '#7d8590'
-  const indent = Math.min((event.depth - 1) * 16, 200)
+// ── Default starter code ──────────────────────────────────────────────────────
+const DEFAULT_CODE = `def greet(name):
+    message = "Hello, " + name
+    return message
+
+def add(a, b):
+    result = a + b
+    return result
+
+# Run some code
+name = "World"
+greeting = greet(name)
+total = add(10, 32)
+print(greeting)
+print("Sum:", total)
+`
+
+// ── Animation speed options ───────────────────────────────────────────────────
+const SPEEDS = [
+  { label: '0.5×', ms: 600 },
+  { label: '1×',   ms: 300 },
+  { label: '2×',   ms: 150 },
+  { label: '4×',   ms: 60  },
+]
+
+// ── Code editor with highlighted lines ───────────────────────────────────────
+function CodeEditor({
+  code, onChange, highlightedLines, activeLines, executedSet, disabled,
+}: {
+  code: string
+  onChange: (c: string) => void
+  highlightedLines: Map<number, number>   // line → step index (for dim yellow)
+  activeLines: Set<number>                // currently animating (bright yellow)
+  executedSet: Set<number>                // all executed so far
+  disabled: boolean
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const backdropRef = useRef<HTMLDivElement>(null)
+
+  const lines = code.split('\n')
+
+  // Sync textarea scroll with backdrop
+  const syncScroll = () => {
+    if (backdropRef.current && textareaRef.current) {
+      backdropRef.current.scrollTop = textareaRef.current.scrollTop
+    }
+  }
 
   return (
-    <div>
-      <div
-        className="flex items-center gap-2 py-0.5 px-2 hover:bg-[#161b22] cursor-pointer text-xs"
-        style={{ paddingLeft: `${indent + 8}px` }}
-        onClick={() => setOpen(!open)}
-      >
-        <span style={{ color }} className="font-mono text-[10px] w-4 shrink-0">
-          {isCall ? '→' : '←'}
-        </span>
-        <span className="font-medium" style={{ color: isCall ? '#e6edf3' : '#7d8590' }}>
-          {event.function}
-        </span>
-        <span className="text-[#7d8590] text-[10px]">{event.module}</span>
-        {event.elapsed_ms !== undefined && (
-          <span className="ml-auto text-[10px] text-[#7d8590] flex items-center gap-0.5">
-            <Clock size={9} />{event.elapsed_ms}ms
-          </span>
-        )}
+    <div style={{
+      flex: 1, display: 'flex', overflow: 'hidden',
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+      fontSize: 13, lineHeight: '22px',
+    }}>
+      {/* Line numbers */}
+      <div style={{
+        width: 48, flexShrink: 0, paddingTop: 12,
+        background: 'var(--bg)', borderRight: '1px solid var(--border)',
+        overflowY: 'hidden', userSelect: 'none',
+        display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+        paddingRight: 10,
+      }}>
+        {lines.map((_, i) => {
+          const lineNo = i + 1
+          const isActive = activeLines.has(lineNo)
+          const wasExecuted = executedSet.has(lineNo)
+          return (
+            <div key={i} style={{
+              height: 22, lineHeight: '22px', fontSize: 11,
+              color: isActive ? '#facc15' : wasExecuted ? '#f59e0b88' : 'var(--text-faint)',
+              fontWeight: isActive ? 700 : 400,
+              transition: 'color 0.1s',
+            }}>
+              {lineNo}
+            </div>
+          )
+        })}
       </div>
-      {open && (
-        <div className="px-4 py-1 text-[10px] text-[#7d8590] bg-[#0d1117]"
-             style={{ paddingLeft: `${indent + 24}px` }}>
-          <div>📄 {event.file?.split('/').slice(-2).join('/')}</div>
-          <div>📍 line {event.line} · depth {event.depth}</div>
+
+      {/* Editor area (textarea + highlight backdrop) */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* Highlight backdrop */}
+        <div
+          ref={backdropRef}
+          style={{
+            position: 'absolute', inset: 0,
+            overflowY: 'hidden', pointerEvents: 'none',
+            paddingTop: 12,
+          }}
+        >
+          {lines.map((_, i) => {
+            const lineNo = i + 1
+            const isActive = activeLines.has(lineNo)
+            const wasExecuted = executedSet.has(lineNo)
+            return (
+              <div key={i} style={{
+                height: 22,
+                background: isActive
+                  ? 'rgba(250, 204, 21, 0.25)'
+                  : wasExecuted ? 'rgba(250, 204, 21, 0.07)' : 'transparent',
+                borderLeft: isActive ? '3px solid #facc15' : wasExecuted ? '3px solid #f59e0b44' : '3px solid transparent',
+                transition: 'background 0.12s, border-color 0.12s',
+              }} />
+            )
+          })}
         </div>
-      )}
+
+        {/* Textarea */}
+        <textarea
+          ref={textareaRef}
+          value={code}
+          onChange={e => onChange(e.target.value)}
+          onScroll={syncScroll}
+          disabled={disabled}
+          spellCheck={false}
+          style={{
+            position: 'absolute', inset: 0,
+            width: '100%', height: '100%',
+            background: 'transparent',
+            border: 'none', outline: 'none', resize: 'none',
+            color: 'var(--text)',
+            padding: '12px 16px',
+            fontFamily: 'inherit', fontSize: 'inherit', lineHeight: 'inherit',
+            overflowY: 'auto',
+            caretColor: 'var(--accent)',
+            opacity: disabled ? 0.7 : 1,
+          }}
+        />
+      </div>
     </div>
   )
 }
 
-export default function ExecutionDebugger() {
-  const { projectPath } = useStore()
-  const [traces, setTraces] = useState<TraceSummary[]>([])
-  const [selectedTrace, setSelectedTrace] = useState<TraceEvent[] | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [running, setRunning] = useState(false)
-
-  // New trace form
-  const [moduleFile, setModuleFile] = useState('')
-  const [funcName, setFuncName] = useState('')
-  const [argsJson, setArgsJson] = useState('[]')
-  const [label, setLabel] = useState('')
-  const [traceError, setTraceError] = useState('')
+// ── Trace step list ───────────────────────────────────────────────────────────
+function TracePanel({ events, currentStep }: { events: TraceEvent[]; currentStep: number }) {
+  const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    axios.get('/api/traces', { params: { path: projectPath } })
-      .then(r => setTraces(r.data.traces || []))
-  }, [projectPath])
+    if (listRef.current) {
+      const active = listRef.current.querySelector('[data-active="true"]')
+      active?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [currentStep])
 
-  async function loadTrace(id: number) {
-    setLoading(true)
-    try {
-      const { data } = await axios.get(`/api/trace/${id}`, { params: { path: projectPath } })
-      setSelectedTrace(data.trace_data || [])
-    } finally {
-      setLoading(false)
+  const visibleEvents = events.slice(0, currentStep + 1)
+
+  return (
+    <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+      {visibleEvents.map((e, i) => {
+        const isActive = i === currentStep
+        const isError = e.event === 'error'
+        const color = isError ? '#ef4444' : e.event === 'return' ? '#10b981' : e.event === 'call' ? '#818cf8' : '#64748b'
+        return (
+          <div
+            key={i}
+            data-active={isActive}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '4px 14px',
+              background: isActive ? 'rgba(250,204,21,0.1)' : 'transparent',
+              borderLeft: isActive ? '3px solid #facc15' : '3px solid transparent',
+              transition: 'background 0.1s',
+            }}
+          >
+            <span style={{ fontSize: 9, fontWeight: 700, color, width: 42, flexShrink: 0, letterSpacing: '0.04em' }}>
+              {e.event.toUpperCase()}
+            </span>
+            <span style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--text)', fontWeight: isActive ? 600 : 400 }}>
+              {e.name}
+            </span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto', flexShrink: 0 }}>
+              L{e.line}
+            </span>
+            {e.elapsed_ms > 0 && (
+              <span style={{ fontSize: 9, color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                <Clock size={8} />{e.elapsed_ms}ms
+              </span>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+export default function ExecutionDebugger() {
+  const { projectPath } = useStore()
+  const [code, setCode] = useState(DEFAULT_CODE)
+  const [events, setEvents] = useState<TraceEvent[]>([])
+  const [running, setRunning] = useState(false)
+  const [animating, setAnimating] = useState(false)
+  const [currentStep, setCurrentStep] = useState(-1)
+  const [speedIdx, setSpeedIdx] = useState(1)
+  const [error, setError] = useState('')
+  const [stderr, setStderr] = useState('')
+  const animRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Derived: which lines are active (current step) and which have been visited
+  const activeLines = new Set<number>()
+  const executedSet = new Set<number>()
+  const highlightedLines = new Map<number, number>()
+
+  for (let i = 0; i <= currentStep && i < events.length; i++) {
+    const e = events[i]
+    if (e.line > 0) {
+      executedSet.add(e.line)
+      highlightedLines.set(e.line, i)
     }
   }
+  if (currentStep >= 0 && currentStep < events.length && events[currentStep].line > 0) {
+    activeLines.add(events[currentStep].line)
+  }
 
-  async function runTrace(e: React.FormEvent) {
-    e.preventDefault()
+  const stopAnimation = useCallback(() => {
+    if (animRef.current) clearTimeout(animRef.current)
+    setAnimating(false)
+  }, [])
+
+  const startAnimation = useCallback((evts: TraceEvent[]) => {
+    setAnimating(true)
+    setCurrentStep(-1)
+    let step = 0
+    const speed = SPEEDS[speedIdx].ms
+
+    function tick() {
+      setCurrentStep(step)
+      step++
+      if (step < evts.length) {
+        animRef.current = setTimeout(tick, speed)
+      } else {
+        setAnimating(false)
+      }
+    }
+    animRef.current = setTimeout(tick, 100)
+  }, [speedIdx])
+
+  useEffect(() => () => { if (animRef.current) clearTimeout(animRef.current) }, [])
+
+  async function runCode() {
+    stopAnimation()
     setRunning(true)
-    setTraceError('')
+    setError('')
+    setStderr('')
+    setEvents([])
+    setCurrentStep(-1)
+
     try {
-      const args = JSON.parse(argsJson)
-      const { data } = await axios.post('/api/trace', {
-        path: projectPath,
-        module_file: moduleFile,
-        function_name: funcName,
-        args,
-        label: label || undefined,
-      })
-      if (!data.ok) { setTraceError(data.stderr || 'Trace failed'); return }
-      setSelectedTrace(data.trace)
-      // Refresh trace list
-      const r2 = await axios.get('/api/traces', { params: { path: projectPath } })
-      setTraces(r2.data.traces || [])
-    } catch (err: any) {
-      setTraceError(err.response?.data?.detail || err.message)
+      const { data } = await axios.post('/api/run-code', { code, path: projectPath })
+      if (!data.ok) { setError(data.error || 'Execution failed'); return }
+      setEvents(data.events || [])
+      setStderr(data.stderr || '')
+      // Start animation after brief pause
+      setTimeout(() => startAnimation(data.events || []), 200)
+    } catch (e: any) {
+      setError(e.response?.data?.error || e.message)
     } finally {
       setRunning(false)
     }
   }
 
-  const callEvents = selectedTrace?.filter(e => e.event === 'call') || []
+  function reset() {
+    stopAnimation()
+    setEvents([])
+    setCurrentStep(-1)
+    setError('')
+    setStderr('')
+  }
+
+  const totalLines = events.filter(e => e.event === 'line').length
+  const errorEvent = events.find(e => e.event === 'error')
+  const isFinished = !animating && events.length > 0 && currentStep >= events.length - 1
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left panel */}
-      <aside className="w-72 shrink-0 border-r border-[#21262d] flex flex-col overflow-hidden">
-        {/* Run new trace */}
-        <div className="p-3 border-b border-[#21262d]">
-          <p className="text-[10px] uppercase tracking-wider text-[#7d8590] mb-2">New Trace</p>
-          <form onSubmit={runTrace} className="flex flex-col gap-1.5">
-            <input className="input-sm" placeholder="module/file.py (relative)" value={moduleFile}
-                   onChange={e => setModuleFile(e.target.value)} />
-            <input className="input-sm" placeholder="function_name" value={funcName}
-                   onChange={e => setFuncName(e.target.value)} />
-            <input className="input-sm" placeholder='args JSON e.g. ["hello"]' value={argsJson}
-                   onChange={e => setArgsJson(e.target.value)} />
-            <input className="input-sm" placeholder="label (optional)" value={label}
-                   onChange={e => setLabel(e.target.value)} />
-            <button type="submit" disabled={running || !moduleFile || !funcName}
-              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-[#6366f1]
-                         hover:bg-[#4f46e5] disabled:opacity-40 rounded text-xs font-medium">
-              {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
-              {running ? 'Tracing…' : 'Run Trace'}
+    <div style={{ display: 'flex', height: '100%', background: 'var(--bg)', overflow: 'hidden' }}>
+
+      {/* ── Left: Editor ── */}
+      <div style={{
+        flex: '0 0 60%', display: 'flex', flexDirection: 'column',
+        borderRight: '1px solid var(--border)',
+      }}>
+        {/* Editor toolbar */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 12px', borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-panel)', flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+            PYTHON
+          </span>
+          <div style={{ flex: 1 }} />
+
+          {/* Speed selector */}
+          <div style={{ display: 'flex', gap: 2 }}>
+            {SPEEDS.map((s, i) => (
+              <button key={i} onClick={() => setSpeedIdx(i)} style={{
+                padding: '2px 7px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
+                border: '1px solid var(--border)',
+                background: speedIdx === i ? 'var(--accent)' : 'var(--bg-input)',
+                color: speedIdx === i ? '#fff' : 'var(--text-muted)',
+              }}>{s.label}</button>
+            ))}
+          </div>
+
+          {/* Run / Stop / Reset */}
+          {animating ? (
+            <button onClick={stopAnimation} style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '5px 14px', borderRadius: 7, border: 'none',
+              background: '#ef4444', color: '#fff',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            }}>
+              <Square size={11} fill="#fff" /> Stop
             </button>
-            {traceError && <p className="text-red-400 text-[10px] break-all">{traceError}</p>}
-          </form>
+          ) : (
+            <button onClick={runCode} disabled={running || !code.trim()} style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '5px 14px', borderRadius: 7, border: 'none',
+              background: running ? 'var(--bg-input)' : '#22c55e',
+              color: running ? 'var(--text-muted)' : '#fff',
+              fontSize: 12, fontWeight: 600, cursor: running ? 'not-allowed' : 'pointer',
+              opacity: running ? 0.7 : 1,
+            }}>
+              {running
+                ? <><Loader2 size={11} className="animate-spin" /> Running…</>
+                : <><Play size={11} fill="#fff" /> Run Trace</>
+              }
+            </button>
+          )}
+
+          {events.length > 0 && (
+            <button onClick={reset} title="Clear" style={{
+              padding: '5px 8px', borderRadius: 7,
+              border: '1px solid var(--border)', background: 'var(--bg-input)',
+              color: 'var(--text-muted)', cursor: 'pointer',
+              display: 'flex', alignItems: 'center',
+            }}>
+              <RotateCcw size={12} />
+            </button>
+          )}
         </div>
 
-        {/* Saved traces */}
-        <div className="flex-1 overflow-y-auto p-2">
-          <p className="text-[10px] uppercase tracking-wider text-[#7d8590] px-1 mb-2">
-            Saved Traces ({traces.length})
-          </p>
-          {traces.map(t => (
-            <button key={t.id} onClick={() => loadTrace(t.id)}
-              className="w-full text-left px-2 py-2 rounded hover:bg-[#21262d] mb-1">
-              <div className="text-xs font-medium text-[#e6edf3] truncate">{t.label}</div>
-              <div className="text-[10px] text-[#7d8590] truncate">{t.entry_point}</div>
-              <div className="text-[10px] text-[#484f58]">{t.created_at}</div>
-            </button>
-          ))}
-        </div>
-      </aside>
+        {/* Code editor */}
+        <CodeEditor
+          code={code}
+          onChange={c => { setCode(c); reset() }}
+          highlightedLines={highlightedLines}
+          activeLines={activeLines}
+          executedSet={executedSet}
+          disabled={running || animating}
+        />
 
-      {/* Right panel — trace viewer */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center h-full text-[#7d8590]">
-            <Loader2 size={18} className="animate-spin mr-2" /> Loading trace…
+        {/* Error / stderr bar */}
+        {(error || errorEvent) && (
+          <div style={{
+            padding: '8px 14px', flexShrink: 0,
+            borderTop: '1px solid #ef444440',
+            background: '#ef444410',
+            display: 'flex', alignItems: 'flex-start', gap: 7,
+          }}>
+            <AlertTriangle size={13} style={{ color: '#ef4444', flexShrink: 0, marginTop: 1 }} />
+            <pre style={{ fontSize: 11, color: '#ef4444', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+              {error || errorEvent?.error}
+            </pre>
           </div>
-        ) : !selectedTrace ? (
-          <div className="flex flex-col items-center justify-center h-full text-[#7d8590] gap-2">
-            <span className="text-3xl">🔍</span>
-            <p>Run a trace or select a saved one to see the execution order</p>
+        )}
+        {stderr && !error && !errorEvent && (
+          <div style={{
+            padding: '6px 14px', flexShrink: 0,
+            borderTop: '1px solid var(--border)',
+            background: 'var(--bg-panel)',
+          }}>
+            <pre style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, whiteSpace: 'pre-wrap' }}>{stderr}</pre>
           </div>
-        ) : (
-          <>
-            <div className="px-4 py-2 border-b border-[#21262d] bg-[#161b22] shrink-0 flex items-center gap-3">
-              <span className="text-xs text-[#7d8590]">
-                {callEvents.length} function calls
-              </span>
-              <div className="ml-auto flex items-center gap-3 text-[10px]">
-                {Object.entries(EVENT_COLOR).map(([k, c]) => (
-                  <span key={k} className="flex items-center gap-1" style={{ color: c }}>
-                    <span className="w-2 h-2 rounded-full" style={{ background: c }} />
-                    {k}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto font-mono py-2">
-              {selectedTrace.map((e, i) => <TraceRow key={i} event={e} index={i} />)}
-            </div>
-          </>
         )}
       </div>
 
-      <style>{`
-        .input-sm {
-          background: #0d1117;
-          border: 1px solid #30363d;
-          border-radius: 4px;
-          padding: 4px 8px;
-          font-size: 11px;
-          color: #e6edf3;
-          width: 100%;
-          outline: none;
-        }
-        .input-sm:focus { border-color: #6366f1; }
-        .input-sm::placeholder { color: #484f58; }
-      `}</style>
+      {/* ── Right: Trace panel ── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Panel header */}
+        <div style={{
+          padding: '8px 14px', borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-panel)', flexShrink: 0,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+            EXECUTION TRACE
+          </span>
+          {events.length > 0 && (
+            <span style={{
+              fontSize: 10, padding: '1px 7px', borderRadius: 99,
+              background: animating ? 'rgba(250,204,21,0.15)' : isFinished ? 'rgba(34,197,94,0.15)' : 'var(--bg-input)',
+              color: animating ? '#facc15' : isFinished ? '#22c55e' : 'var(--text-muted)',
+              border: `1px solid ${animating ? '#facc1540' : isFinished ? '#22c55e40' : 'var(--border)'}`,
+            }}>
+              {animating ? `step ${currentStep + 1} / ${events.length}` : isFinished ? `✓ ${totalLines} lines executed` : ''}
+            </span>
+          )}
+        </div>
+
+        {events.length === 0 ? (
+          <div style={{
+            flex: 1, display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+            gap: 12, color: 'var(--text-muted)',
+          }}>
+            <div style={{
+              width: 52, height: 52, borderRadius: '50%',
+              background: 'var(--bg-card)', border: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Play size={20} style={{ color: 'var(--text-faint)' }} />
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Write code and click Run Trace</div>
+              <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                Each executed line will be highlighted in yellow
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Legend */}
+            <div style={{
+              padding: '6px 14px', borderBottom: '1px solid var(--border)',
+              display: 'flex', gap: 14, flexShrink: 0,
+            }}>
+              {[
+                { color: '#818cf8', label: 'call' },
+                { color: '#64748b', label: 'line' },
+                { color: '#10b981', label: 'return' },
+                { color: '#ef4444', label: 'error' },
+              ].map(({ color, label }) => (
+                <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--text-muted)' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+                  {label}
+                </span>
+              ))}
+            </div>
+            <TracePanel events={events} currentStep={currentStep} />
+          </>
+        )}
+      </div>
     </div>
   )
 }

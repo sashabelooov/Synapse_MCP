@@ -1,9 +1,11 @@
 import { Router, Request, Response } from 'express'
 import fs from 'fs'
 import path from 'path'
+import os from 'os'
+import { spawnSync } from 'child_process'
 import { getDbPath } from '../config.js'
 import { getDb } from '../storage/database.js'
-import { analyzeProject, buildTreeNode, collectPythonFiles } from '../analyzer/index.js'
+import { analyzeProject, buildTreeNode } from '../analyzer/index.js'
 import { buildCallGraph, buildDbGraph, getReachableIds } from '../graph/builder.js'
 
 const router = Router()
@@ -159,9 +161,73 @@ router.get('/devops', (req: Request, res: Response) => {
   }
 })
 
-// POST /api/trace — minimal stub (dynamic tracing requires running Python, skip for now)
-router.post('/trace', (req: Request, res: Response) => {
-  res.json({ ok: false, error: 'Dynamic tracing requires Python runtime. Use the Python MCP server for this feature.' })
+// POST /api/trace — minimal stub
+router.post('/trace', (_req: Request, res: Response) => {
+  res.json({ ok: false, error: 'Use /api/run-code for code execution tracing.' })
+})
+
+// POST /api/run-code — execute Python code and trace line-by-line execution
+router.post('/run-code', (req: Request, res: Response) => {
+  const { code } = req.body
+  if (!code || typeof code !== 'string') return res.status(400).json({ ok: false, error: 'code required' })
+  if (code.length > 50_000) return res.status(400).json({ ok: false, error: 'Code too large (max 50KB)' })
+
+  const TRACER = `
+import sys, json, time
+
+_events = []
+_start = time.perf_counter()
+_user_src = "<user_code>"
+
+def _tracer(frame, event, arg):
+    if frame.f_code.co_filename == _user_src and event in ("call", "line", "return"):
+        _events.append({
+            "event": event,
+            "line": frame.f_lineno,
+            "name": frame.f_code.co_name,
+            "elapsed_ms": round((time.perf_counter() - _start) * 1000, 2)
+        })
+    return _tracer
+
+_globals = {"__name__": "__main__"}
+_code_str = sys.stdin.read()
+_compiled = compile(_code_str, _user_src, "exec")
+sys.settrace(_tracer)
+try:
+    exec(_compiled, _globals)
+except Exception as e:
+    import traceback
+    _events.append({"event": "error", "line": 0, "name": "error",
+                    "error": str(e), "traceback": traceback.format_exc(), "elapsed_ms": 0})
+finally:
+    sys.settrace(None)
+
+print(json.dumps(_events))
+`
+
+  try {
+    const tmpTracer = path.join(os.tmpdir(), `synapse_tracer_${Date.now()}.py`)
+    fs.writeFileSync(tmpTracer, TRACER)
+
+    const result = spawnSync('python3', [tmpTracer], {
+      input: code,
+      encoding: 'utf8',
+      timeout: 10_000,
+    })
+
+    fs.unlinkSync(tmpTracer)
+
+    if (result.error) return res.json({ ok: false, error: result.error.message })
+    if (result.status !== 0 && !result.stdout) {
+      return res.json({ ok: false, error: result.stderr || 'Python execution failed' })
+    }
+
+    const events = JSON.parse(result.stdout || '[]')
+    const stderr = result.stderr || ''
+    res.json({ ok: true, events, stderr })
+  } catch (e: any) {
+    res.json({ ok: false, error: e.message })
+  }
 })
 
 // GET /api/traces
