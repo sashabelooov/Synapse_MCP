@@ -160,13 +160,15 @@ export default function App() {
 
             <nav className="fp-nav">
               {TABS.map(({ id, label, Icon }) => {
-                const isActive = activeTab === id && ready
+                const standalone = id === 'debugger'
+                const enabled = ready || standalone
+                const isActive = activeTab === id && enabled
                 return (
                   <button
                     key={id}
-                    onClick={() => { if (ready) { setActiveTab(id as any); setMenuOpen(false) } }}
-                    disabled={!ready}
-                    className={`fp-item${isActive ? ' fp-item--active' : ''}${!ready ? ' fp-item--disabled' : ''}`}
+                    onClick={() => { if (enabled) { setActiveTab(id as any); setMenuOpen(false) } }}
+                    disabled={!enabled}
+                    className={`fp-item${isActive ? ' fp-item--active' : ''}${!enabled ? ' fp-item--disabled' : ''}`}
                   >
                     <Icon size={16} style={{ flexShrink: 0 }} />
                     <span>{label}</span>
@@ -219,14 +221,14 @@ export default function App() {
 
       {/* Canvas content — fixed, does NOT move with pan (each view has its own pan) */}
       <div className="workspace-content">
-        {ready && (
+        {activeTab === 'debugger' && <ExecutionDebugger />}
+        {ready && activeTab !== 'debugger' && (
           <>
             {activeTab === 'tree'      && <ProjectTree />}
             {activeTab === 'callgraph' && <CallGraph />}
             {activeTab === 'dbschema'  && <DbSchema />}
             {activeTab === 'routes'    && <RoutesView />}
             {activeTab === 'devops'    && <DevopsView />}
-            {activeTab === 'debugger'  && <ExecutionDebugger />}
           </>
         )}
       </div>
