@@ -84,6 +84,11 @@ body {
   background-size: var(--dot-size) var(--dot-size);
 }
 
+/* ── ReactFlow — transparent bg so dot grid shows through ── */
+.react-flow,
+.react-flow__renderer,
+.react-flow__background { background: transparent !important; }
+
 /* ── Hamburger menu button ── */
 .menu-btn {
   display: flex;
@@ -328,6 +333,18 @@ body {
   padding-left: 14px;
 }
 .fp-item--disabled { opacity: 0.3; cursor: not-allowed; }
+.fp-item--chat { color: var(--accent) !important; font-weight: 500; }
+.fp-item--chat:hover { background: rgba(99,102,241,0.12) !important; }
+.fp-chat-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 20px;
+  background: var(--accent);
+  color: #fff;
+  letter-spacing: 0.04em;
+}
 
 .fp-stat-row {
   display: flex;

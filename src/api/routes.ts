@@ -3,10 +3,58 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { spawnSync } from 'child_process'
+import { fileURLToPath } from 'url'
+import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { getDbPath } from '../config.js'
 import { getDb } from '../storage/database.js'
 import { analyzeProject, buildTreeNode } from '../analyzer/index.js'
 import { buildCallGraph, buildDbGraph, getReachableIds } from '../graph/builder.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const DIAGRAMS_DIR = path.resolve(__dirname, '../../data/diagrams')
+if (!fs.existsSync(DIAGRAMS_DIR)) fs.mkdirSync(DIAGRAMS_DIR, { recursive: true })
+
+const ARCHITECT_SYSTEM_PROMPT = `You are an AI architecture diagram generator for Synapse, a code intelligence tool.
+Your job: help engineers visualize their system architecture as interactive diagrams.
+
+## PHASE 1 — Clarification (ONLY for the very first user message)
+Ask exactly 1-2 short, targeted questions. Keep it conversational. Do NOT output a diagram yet.
+
+## PHASE 2 — Generate diagram
+Once you understand the system, output the complete diagram JSON wrapped in <DIAGRAM> tags.
+Announce it naturally first (e.g. "Here's your architecture diagram:"), then output:
+
+<DIAGRAM>
+{
+  "name": "System Name",
+  "description": "One-line description",
+  "nodes": [
+    { "id": "n1", "icon": "react", "label": "React App", "nodeType": "client", "color": "#61dafb", "x": 100, "y": 200 }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n1", "target": "n2", "label": "REST", "style": "solid" }
+  ],
+  "groups": [
+    { "id": "g1", "label": "Frontend", "nodeIds": ["n1"], "color": "#58a6ff" }
+  ]
+}
+</DIAGRAM>
+
+## Available icons (use in "icon" field)
+Tech: react, nextjs, vuejs, nodejs, python, fastapi, django, flask, spring, springboot,
+      postgresql, mysql, mongodb, redis, kafka, rabbitmq, elasticsearch,
+      docker, kubernetes, nginx, grafana, prometheus, firebase, supabase,
+      stripe, github, typescript, angular
+System: server, database, queue, gateway, client, cache, storage, load-balancer, mobile, browser
+
+## nodeType options
+client, service, database, queue, gateway, cache, storage, mobile
+
+## Layout rules
+- Spread nodes: x 50–1200, y 50–700, min 180px apart
+- Client/frontend left, databases/storage right
+- Use groups to label logical layers`
 
 const router = Router()
 
@@ -317,6 +365,141 @@ router.get('/function-source', (req: Request, res: Response) => {
 // GET /api/projects
 router.get('/projects', (_req: Request, res: Response) => {
   res.json({ projects: [] })
+})
+
+const CLAUDE_CLI = process.env.CLAUDE_CLI_PATH || 'claude'
+
+// ─── Architect: AI Chat ──────────────────────────────────────────────────────
+router.post('/architect/chat', async (req: Request, res: Response) => {
+  try {
+    const { messages, model = 'claude' } = req.body
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ ok: false, error: 'messages array required' })
+    }
+
+    let reply = ''
+
+    if (model === 'openai') {
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{ role: 'system', content: ARCHITECT_SYSTEM_PROMPT }, ...messages],
+        max_tokens: 4096,
+      })
+      reply = completion.choices[0].message.content ?? ''
+
+    } else if (model === 'claude-cli') {
+      // Format conversation for Claude Code CLI
+      const conversation = (messages as any[])
+        .map(m => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`)
+        .join('\n\n')
+      const prompt = `${ARCHITECT_SYSTEM_PROMPT}\n\n---\n\n${conversation}\n\nAssistant:`
+
+      // Claude CLI has its own auth — don't pass ANTHROPIC_API_KEY or it'll reject a placeholder
+      const { ANTHROPIC_API_KEY: _omit, ...cliEnv } = process.env
+      const result = spawnSync(CLAUDE_CLI, [
+        '-p',
+        '--model', 'sonnet',
+        '--no-session-persistence',
+        '--output-format', 'text',
+      ], {
+        input: prompt,
+        encoding: 'utf8',
+        timeout: 120_000,
+        env: { ...cliEnv, HOME: cliEnv.HOME || os.homedir() },
+      })
+
+      if (result.error) throw result.error
+      if (result.status !== 0 && !result.stdout) {
+        throw new Error(result.stderr?.trim() || 'Claude CLI returned no output')
+      }
+      reply = result.stdout?.trim() || ''
+
+    } else {
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+      const msg = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4096,
+        system: ARCHITECT_SYSTEM_PROMPT,
+        messages,
+      })
+      reply = msg.content[0].type === 'text' ? msg.content[0].text : ''
+    }
+
+    const match = reply.match(/<DIAGRAM>([\s\S]*?)<\/DIAGRAM>/)
+    if (match) {
+      try {
+        const diagram = JSON.parse(match[1].trim())
+        const text = reply.slice(0, reply.indexOf('<DIAGRAM>')).trim()
+        return res.json({ ok: true, message: text || 'Here is your architecture diagram:', diagram })
+      } catch {
+        return res.json({ ok: true, message: reply })
+      }
+    }
+
+    res.json({ ok: true, message: reply })
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── Architect: Save diagram ─────────────────────────────────────────────────
+router.post('/architect/diagrams', (req: Request, res: Response) => {
+  try {
+    const { diagram } = req.body
+    if (!diagram) return res.status(400).json({ ok: false, error: 'diagram required' })
+    const id = diagram.id || `diag_${Date.now()}`
+    const now = new Date().toISOString()
+    const toSave = { ...diagram, id, updatedAt: now, createdAt: diagram.createdAt || now }
+    fs.writeFileSync(path.join(DIAGRAMS_DIR, `${id}.json`), JSON.stringify(toSave, null, 2))
+    res.json({ ok: true, id })
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── Architect: List diagrams ─────────────────────────────────────────────────
+router.get('/architect/diagrams', (req: Request, res: Response) => {
+  try {
+    const projectPath = req.query.projectPath as string | undefined
+    const files = fs.existsSync(DIAGRAMS_DIR)
+      ? fs.readdirSync(DIAGRAMS_DIR).filter(f => f.endsWith('.json'))
+      : []
+    const diagrams = files
+      .map(f => {
+        try {
+          const d = JSON.parse(fs.readFileSync(path.join(DIAGRAMS_DIR, f), 'utf8'))
+          return { id: d.id, name: d.name, description: d.description, projectPath: d.projectPath, createdAt: d.createdAt, updatedAt: d.updatedAt }
+        } catch { return null }
+      })
+      .filter(Boolean)
+      .filter(d => !projectPath || (d as any).projectPath === projectPath)
+    res.json({ ok: true, diagrams })
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── Architect: Get diagram ───────────────────────────────────────────────────
+router.get('/architect/diagrams/:id', (req: Request, res: Response) => {
+  try {
+    const p = path.join(DIAGRAMS_DIR, `${req.params.id}.json`)
+    if (!fs.existsSync(p)) return res.status(404).json({ ok: false, error: 'Not found' })
+    res.json({ ok: true, diagram: JSON.parse(fs.readFileSync(p, 'utf8')) })
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── Architect: Delete diagram ────────────────────────────────────────────────
+router.delete('/architect/diagrams/:id', (req: Request, res: Response) => {
+  try {
+    const p = path.join(DIAGRAMS_DIR, `${req.params.id}.json`)
+    if (fs.existsSync(p)) fs.unlinkSync(p)
+    res.json({ ok: true })
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
 })
 
 export default router

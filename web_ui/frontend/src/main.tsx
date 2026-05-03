@@ -4,6 +4,8 @@ import App from './App'
 import './index.css'
 import 'reactflow/dist/style.css'
 
+document.documentElement.setAttribute('data-theme', 'dark')
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
